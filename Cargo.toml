@@ -1,0 +1,54 @@
+[package]
+name = "smol_bitmap"
+version = "0.1.6"
+edition = "2024"
+rust-version = "1.89"
+authors = ["Can Boluk <me@can.ac>"]
+description = "A space-efficient bitmap with inline storage optimization for small bitmaps"
+documentation = "https://docs.rs/smol_bitmap"
+homepage = "https://github.com/can1357/smol_bitmap"
+repository = "https://github.com/can1357/smol_bitmap"
+readme = "README.md"
+keywords = ["bitmap", "bitset", "bitvector", "inline", "no-std"]
+categories = ["data-structures", "algorithms", "embedded"]
+license = "MIT"
+exclude = [".github/", ".gitignore", "rustfmt.toml"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde", "std"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+criterion = "0.7"
+proptest = "1.5"
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+rand = "0.8"
+serde_json = "1.0"
+bitvec = "1.0"
+
+[[bench]]
+name = "basic_bench"
+harness = false
+
+[[bench]]
+name = "comparison"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
