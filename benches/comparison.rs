@@ -1,4 +1,4 @@
-//! Benchmark comparison between SmolBitmap and bitvec
+//! Benchmark comparison between `SmolBitmap` and bitvec
 
 use bitvec::prelude::*;
 use core::hint::black_box;
@@ -49,7 +49,7 @@ fn bench_set_operations(c: &mut Criterion) {
                 b.iter(|| {
                     let mut bitmap = SmolBitmap::with_capacity(size);
                     for &i in indices {
-                        bitmap.set(i, true);
+                        bitmap.insert(i);
                     }
                     black_box(&bitmap);
                 });
@@ -61,7 +61,7 @@ fn bench_set_operations(c: &mut Criterion) {
                 let mut bitvec = BitVec::<u64, Lsb0>::with_capacity(size);
                 bitvec.resize(size, false);
                 for &i in indices {
-                    bitvec.set(i, true);
+                    bitvec.insert(i, true);
                 }
                 black_box(&bitvec);
             });
@@ -83,8 +83,8 @@ fn bench_get_operations(c: &mut Criterion) {
         bv.resize(size, false);
 
         for i in (0..size).step_by(3) {
-            smol.set(i, true);
-            bv.set(i, true);
+            smol.insert(i);
+            bv.insert(i, true);
         }
 
         let test_indices: Vec<usize> = (0..1000).map(|i| i % size).collect();
@@ -136,8 +136,8 @@ fn bench_iteration(c: &mut Criterion) {
 
         // Set every 10th bit
         for i in (0..size).step_by(10) {
-            smol.set(i, true);
-            bv.set(i, true);
+            smol.insert(i);
+            bv.insert(i, true);
         }
 
         group.throughput(Throughput::Elements((size / 10) as u64));
@@ -170,8 +170,8 @@ fn bench_count_ones(c: &mut Criterion) {
 
         // Set 50% of bits
         for i in (0..size).step_by(2) {
-            smol.set(i, true);
-            bv.set(i, true);
+            smol.insert(i);
+            bv.insert(i, true);
         }
 
         group.bench_with_input(BenchmarkId::new("SmolBitmap", size), &smol, |b, bitmap| {

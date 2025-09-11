@@ -1,9 +1,9 @@
 # SmolBitmap
 
-[![Crates.io](https://img.shields.io/crates/v/smol_bitmap.svg?_v=0.1.6)](https://crates.io/crates/smol_bitmap)
-[![Documentation](https://docs.rs/smol_bitmap/badge.svg?_v=0.1.6)](https://docs.rs/smol_bitmap)
-[![License](https://img.shields.io/crates/l/smol_bitmap.svg?_v=0.1.6)](https://github.com/can1357/smol_bitmap#license)
-[![CI](https://github.com/can1357/smol_bitmap/workflows/CI/badge.svg?_v=0.1.6)](https://github.com/can1357/smol_bitmap/actions)
+[![Crates.io](https://img.shields.io/crates/v/smol_bitmap.svg?_v=0.2.2)](https://crates.io/crates/smol_bitmap)
+[![Documentation](https://docs.rs/smol_bitmap/badge.svg?_v=0.2.2)](https://docs.rs/smol_bitmap)
+[![License](https://img.shields.io/crates/l/smol_bitmap.svg?_v=0.2.2)](https://github.com/can1357/smol_bitmap#license)
+[![CI](https://github.com/can1357/smol_bitmap/workflows/CI/badge.svg?_v=0.2.2)](https://github.com/can1357/smol_bitmap/actions)
 
 A space-efficient bitmap implementation with inline storage optimization for Rust.
 
@@ -23,7 +23,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-smol_bitmap = "0.1"
+smol_bitmap = "0.2.2"
 ```
 
 ### Basic Operations
@@ -35,9 +35,9 @@ fn main() {
     let mut bitmap = SmolBitmap::new();
 
     // Set some bits
-    bitmap.set(5, true);
-    bitmap.set(10, true);
-    bitmap.set(100, true);
+    bitmap.insert(5);
+    bitmap.insert(10);
+    bitmap.insert(100);
 
     // Check if bits are set
     assert!(bitmap.get(5));
@@ -60,14 +60,14 @@ use smol_bitmap::SmolBitmap;
 
 fn main() {
     let mut a = SmolBitmap::new();
-    a.set(1, true);
-    a.set(2, true);
-    a.set(3, true);
+    a.insert(1);
+    a.insert(2);
+    a.insert(3);
 
     let mut b = SmolBitmap::new();
-    b.set(2, true);
-    b.set(3, true);
-    b.set(4, true);
+    b.insert(2);
+    b.insert(3);
+    b.insert(4);
 
     // Union: {1, 2, 3, 4}
     let union = a.union(&b);
@@ -105,7 +105,7 @@ fn main() {
     assert_eq!(bitmap.prev_set_bit(35), Some(30));
 
     // Toggle bits
-    bitmap.toggle(25);
+    bitmap.complement(25);
 
     // Create from iterator
     let from_iter: SmolBitmap = (0..10).step_by(2).collect();
@@ -196,7 +196,7 @@ SmolBitmap supports `no_std` environments with `alloc`:
 
 ```toml
 [dependencies]
-smol_bitmap = { version = "0.1", default-features = false }
+smol_bitmap = { version = "0.2.2", default-features = false }
 ```
 
 This will disable the `std` feature but still requires an allocator for heap storage when bitmaps exceed inline capacity.

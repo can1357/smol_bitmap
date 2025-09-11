@@ -1,13 +1,16 @@
 //! `SmolBitmap` struct and core implementation.
 
-use alloc::vec::Vec;
-use core::{mem, ops::Index, slice};
+use core::{
+    cmp::{self, Ordering},
+    hint, mem,
+    ops::Index,
+    slice,
+};
 
 use crate::{
     iter::{BitIter, Iter, SelectIter},
-    storage::{
-        ArrayBitmap, BITS_INLINE, BitArray, SmolBitmapBuilder, WORDS_INLINE, bitpos, rtrim0,
-    },
+    macros::{bitpos, msb},
+    storage::{ArrayBitmap, BITS_INLINE, BitArray, SmolBitmapBuilder, WORDS_INLINE, rtrim0},
 };
 
 /// A compact bitmap that stores bits either inline or on the heap.
@@ -21,7 +24,7 @@ use crate::{
 ///
 /// # Storage Strategy
 ///
-/// - **Inline**: Up to SmolBitmap::inline_capacity() bits stored directly in
+/// - **Inline**: Up to `SmolBitmap::inline_capacity()` bits stored directly in
 ///   the struct
 /// - **Heap**: Automatically switches to heap allocation for larger bitmaps
 /// - The highest bit of the last word indicates storage mode (0 = inline, 1 =
@@ -46,8 +49,8 @@ use crate::{
 /// let mut bitmap = SmolBitmap::new();
 ///
 /// // Set some bits
-/// bitmap.set(10, true);
-/// bitmap.set(100, true);
+/// bitmap.insert(10);
+/// bitmap.insert(100);
 ///
 /// // Check bits
 /// assert!(bitmap.get(10));
@@ -55,7 +58,7 @@ use crate::{
 /// assert!(!bitmap.get(50)); // Unset bits are false
 ///
 /// // Force heap allocation
-/// bitmap.set(200, true);
+/// bitmap.insert(200);
 /// assert!(bitmap.is_spilled()); // Now using heap storage
 /// ```
 #[repr(transparent)]
@@ -116,10 +119,10 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(8, true);
+    /// bitmap.insert(1);
+    /// bitmap.insert(2);
+    /// bitmap.insert(5);
+    /// bitmap.insert(8);
     ///
     /// // Retain only even indices
     /// bitmap.retain(|bit| bit % 2 == 0);
@@ -183,7 +186,7 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert!(!bitmap.is_spilled());
     ///
-    /// bitmap.set(200, true); // Beyond inline capacity
+    /// bitmap.insert(200); // Beyond inline capacity
     /// assert!(bitmap.is_spilled());
     /// ```
     #[must_use]
@@ -218,9 +221,7 @@ impl SmolBitmap {
         );
         // Negate to get the actual length
         let n = encoded.wrapping_neg();
-        if n <= 0 {
-            panic!("external word count should be positive")
-        }
+        assert!((n > 0), "external word count should be positive");
         debug_assert!(n > 0, "external word count should be positive");
         n as usize
     }
@@ -247,7 +248,7 @@ impl SmolBitmap {
 
     /// Get a mutable pointer to the storage
     #[inline(always)]
-    pub fn as_mut_ptr(&mut self) -> *mut u64 {
+    pub const fn as_mut_ptr(&mut self) -> *mut u64 {
         if self.is_spilled() {
             self.external_ptr()
         } else {
@@ -257,7 +258,7 @@ impl SmolBitmap {
 
     /// Get the storage as a slice
     #[must_use]
-    pub fn as_slice(&self) -> &[u64] {
+    pub const fn as_slice(&self) -> &[u64] {
         unsafe { slice::from_raw_parts(self.as_ptr(), self.word_count()) }
     }
 
@@ -268,7 +269,7 @@ impl SmolBitmap {
     /// - Modifications must maintain the storage invariants
     /// - The slice must not be extended beyond its capacity
     #[inline(always)]
-    pub unsafe fn as_mut_slice(&mut self) -> &mut [u64] {
+    pub const unsafe fn as_mut_slice(&mut self) -> &mut [u64] {
         unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.word_count()) }
     }
 
@@ -301,8 +302,8 @@ impl SmolBitmap {
     ///
     /// # Safety Contract
     ///
-    /// The closure `f` receives a mutable reference to BitArray and can modify
-    /// it. This pattern ensures:
+    /// The closure `f` receives a mutable reference to `BitArray` and can
+    /// modify it. This pattern ensures:
     /// - Old storage is properly deallocated when transitioning modes
     /// - New storage is properly encoded before being stored
     /// - No memory leaks during storage transitions
@@ -392,7 +393,7 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(42, true);
+    /// bitmap.insert(42);
     ///
     /// assert!(bitmap.get(42));
     /// assert!(!bitmap.get(43));
@@ -407,7 +408,7 @@ impl SmolBitmap {
         }
 
         // For inline storage, check if bit index is beyond capacity
-        let (idx, bp) = bitpos(i);
+        let (idx, bp) = bitpos!(i);
         let slice = self.as_slice();
         debug_assert!(idx < slice.len(), "word index {idx} out of bounds");
         // SAFETY: We checked that idx < slice.len() above
@@ -429,23 +430,27 @@ impl SmolBitmap {
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
     ///
-    /// assert_eq!(bitmap.exchange(10, true), false);
-    /// assert_eq!(bitmap.exchange(10, false), true);
-    /// assert_eq!(bitmap.exchange(10, true), false);
+    /// assert_eq!(bitmap.replace(10, true), false);
+    /// assert_eq!(bitmap.replace(10, false), true);
+    /// assert_eq!(bitmap.replace(10, true), false);
     /// ```
+    pub fn replace(&mut self, i: usize, v: bool) -> bool {
+        self.replace_generic(i, v)
+    }
+
     #[inline(always)]
-    pub fn exchange(&mut self, i: usize, v: bool) -> bool {
+    fn replace_generic(&mut self, i: usize, v: impl ToBool) -> bool {
         // Check if we need to grow
         let cap = self.capacity();
         if let Some(grow) = i.checked_sub(cap) {
-            if !v {
+            if !v.to_bool() {
                 return false;
             }
             self.reserve(grow + 1);
         }
 
         // Compute word index and bit position
-        let (idx, bp) = bitpos(i);
+        let (idx, bp) = bitpos!(i);
 
         // Get a fresh slice after potential reallocation
         // SAFETY: reserve() ensures wi is within bounds of the slice
@@ -464,7 +469,7 @@ impl SmolBitmap {
         let mask = 1 << bp;
 
         let prev = *word;
-        if v {
+        if v.to_bool() {
             *word = prev | mask;
         } else {
             *word = prev & !mask;
@@ -487,15 +492,15 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(10, true);
-    /// bitmap.set(20, true);
+    /// bitmap.insert(10);
+    /// bitmap.insert(20);
     ///
     /// assert!(bitmap.get(10));
     /// assert!(bitmap.get(20));
     /// ```
     #[inline(always)]
     pub fn set(&mut self, i: usize, v: bool) {
-        let _ = self.exchange(i, v);
+        let _ = self.replace_generic(i, v);
     }
 
     /// Inserts a bit at the given index, setting it to `true`.
@@ -514,7 +519,7 @@ impl SmolBitmap {
     /// ```
     #[inline(always)]
     pub fn insert(&mut self, i: usize) -> bool {
-        !self.exchange(i, true)
+        !self.replace_generic(i, True)
     }
 
     /// Removes a bit at the given index, setting it to `false`.
@@ -527,14 +532,14 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(10, true);
+    /// bitmap.insert(10);
     ///
     /// assert!(bitmap.remove(10)); // Bit was set
     /// assert!(!bitmap.remove(10)); // Already unset
     /// ```
     #[inline(always)]
     pub fn remove(&mut self, i: usize) -> bool {
-        self.exchange(i, false)
+        self.replace_generic(i, False)
     }
 
     /// Clears all bits in the bitmap.
@@ -547,8 +552,8 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(100, true);
-    /// bitmap.set(200, true);
+    /// bitmap.insert(100);
+    /// bitmap.insert(200);
     ///
     /// bitmap.clear();
     /// assert!(!bitmap.get(100));
@@ -573,8 +578,8 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(300, true);
-    /// bitmap.set(300, false); // Clear the bit
+    /// bitmap.insert(300);
+    /// bitmap.remove(300); // Clear the bit
     ///
     /// bitmap.shrink_to_fit();
     /// // May move back to inline storage if all set bits fit
@@ -588,9 +593,119 @@ impl SmolBitmap {
         );
     }
 
-    /// Returns the trimmed slice of the bitmap.
-    pub(crate) fn as_slice_rtrim(&self) -> &[u64] {
+    /// Returns a trimmed slice of the bitmap, removing any trailing zero words.
+    ///
+    /// This method provides a view of the bitmap's underlying storage without
+    /// trailing zeros, which can be useful for operations that require a
+    /// compact representation of the set bits.
+    ///
+    /// # Returns
+    ///
+    /// A slice of type `&[u64]` representing the bitmap's storage without
+    /// trailing zeros.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(0);
+    /// bitmap.insert(64);
+    ///
+    /// let trimmed_slice = bitmap.as_slice_rtrim();
+    /// assert_eq!(trimmed_slice.len(), 2); // Only two words are needed
+    /// ```
+    pub const fn as_slice_rtrim(&self) -> &[u64] {
         rtrim0(self.as_slice())
+    }
+
+    /// Compares two slices for equivalency, ignoring trailing zero words.
+    ///
+    /// This function checks if two slices are equivalent by comparing their
+    /// elements, ignoring any trailing zero words. This is useful for
+    /// comparing bitmaps where trailing zeros do not affect the logical
+    /// equivalence of the data.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - The first slice to compare.
+    /// * `b` - The second slice to compare.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the slices are equivalent when trailing zeros are ignored,
+    /// `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let a = SmolBitmap::from(&[1u64, 2, 0, 0]);
+    /// let b = &[1u64, 2];
+    /// assert!(a.eq_rtrim(b));
+    ///
+    /// let c = &[1u64, 2, 3];
+    /// assert!(!a.eq_rtrim(c));
+    /// ```
+    pub fn eq_rtrim(&self, b: &[u64]) -> bool {
+        let a = self.as_slice();
+        let (a, b, common) = if a.len() >= b.len() {
+            (a, b, b.len())
+        } else {
+            (b, a, a.len())
+        };
+        let (a, rem) = a.split_at(common);
+
+        a == b && rem.iter().all(|&w| w == 0)
+    }
+
+    /// Compares two slices for ordering, ignoring trailing zero words.
+    ///
+    /// This function compares two slices by their elements, ignoring any
+    /// trailing zero words. This is useful for comparing bitmaps where trailing
+    /// zeros do not affect the logical ordering of the data.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - The first slice to compare.
+    /// * `b` - The second slice to compare.
+    ///
+    /// # Returns
+    ///
+    /// An [`Ordering`] value that indicates whether `a` is less than, equal to,
+    /// or greater than `b` when trailing zeros are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let a = SmolBitmap::from(&[1u64, 2, 0, 0]);
+    /// let b = &[1u64, 2];
+    /// assert_eq!(a.cmp_rtrim(b), core::cmp::Ordering::Equal);
+    ///
+    /// let c = &[1u64, 2, 3];
+    /// assert_eq!(a.cmp_rtrim(c), core::cmp::Ordering::Less);
+    /// ```
+    pub fn cmp_rtrim(&self, b: &[u64]) -> Ordering {
+        let a = self.as_slice();
+        let (a, b, common, rev) = if a.len() >= b.len() {
+            (a, b, b.len(), false)
+        } else {
+            (b, a, a.len(), true)
+        };
+        let (a, rem) = a.split_at(common);
+
+        let result = a.cmp(b).then_with(|| {
+            if rem.iter().all(|&w| w == 0) {
+                cmp::Ordering::Equal
+            } else {
+                cmp::Ordering::Greater
+            }
+        });
+        hint::select_unpredictable(rev, result.reverse(), result)
     }
 
     /// Removes a prefix of consecutive bits with the specified value.
@@ -620,12 +735,12 @@ impl SmolBitmap {
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
     /// // Set bits: 111100101
-    /// bitmap.set(0, true);
-    /// bitmap.set(1, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(7, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(1);
+    /// bitmap.insert(2);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
+    /// bitmap.insert(7);
     ///
     /// // Remove prefix of 1s
     /// let removed = bitmap.remove_prefix(true);
@@ -670,8 +785,8 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(10, true);
-    /// bitmap.set(20, true);
+    /// bitmap.insert(10);
+    /// bitmap.insert(20);
     ///
     /// let mut iter = bitmap.iter();
     /// assert_eq!(iter.next(), Some(10));
@@ -679,7 +794,7 @@ impl SmolBitmap {
     /// assert_eq!(iter.next(), None);
     /// ```
     #[must_use]
-    pub fn iter(&self) -> Iter<'_> {
+    pub const fn iter(&self) -> Iter<'_> {
         let slice = self.as_slice_rtrim();
         BitIter {
             words: slice,
@@ -705,9 +820,9 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(4, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(2);
+    /// bitmap.insert(4);
     ///
     /// let items = vec!["a", "b", "c", "d", "e"];
     /// let selected: Vec<_> = bitmap.select(items.iter().copied()).collect();
@@ -729,8 +844,8 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert_eq!(bitmap.len(), 0);
     ///
-    /// bitmap.set(10, true);
-    /// bitmap.set(20, true);
+    /// bitmap.insert(10);
+    /// bitmap.insert(20);
     /// assert_eq!(bitmap.len(), 2);
     /// ```
     #[must_use]
@@ -756,21 +871,21 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(5, true);
-    /// bitmap.set(10, true);
-    /// bitmap.set(15, true);
-    /// bitmap.set(20, true);
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
+    /// bitmap.insert(15);
+    /// bitmap.insert(20);
     ///
-    /// assert_eq!(bitmap.position_of(0), 0); // No bits below index 0
-    /// assert_eq!(bitmap.position_of(6), 1); // Bit at index 5
-    /// assert_eq!(bitmap.position_of(12), 2); // Bits at indices 5, 10
-    /// assert_eq!(bitmap.position_of(25), 4); // All bits below index 25
+    /// assert_eq!(bitmap.rank(0), 0); // No bits below index 0
+    /// assert_eq!(bitmap.rank(6), 1); // Bit at index 5
+    /// assert_eq!(bitmap.rank(12), 2); // Bits at indices 5, 10
+    /// assert_eq!(bitmap.rank(25), 4); // All bits below index 25
     /// ```
     #[inline]
     #[must_use]
-    pub fn position_of(&self, idx: usize) -> usize {
+    pub fn rank(&self, i: usize) -> usize {
         let slice = self.as_slice();
-        let (mut wrem, bit_idx) = bitpos(idx);
+        let (mut wrem, bit_idx) = bitpos!(i);
 
         let mut count = 0;
         for &word in slice {
@@ -799,7 +914,7 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert!(bitmap.is_empty());
     ///
-    /// bitmap.set(10, true);
+    /// bitmap.insert(10);
     /// assert!(!bitmap.is_empty());
     /// ```
     #[must_use]
@@ -820,9 +935,9 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert_eq!(bitmap.first(), None);
     ///
-    /// bitmap.set(10, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(20, true);
+    /// bitmap.insert(10);
+    /// bitmap.insert(5);
+    /// bitmap.insert(20);
     /// assert_eq!(bitmap.first(), Some(5));
     /// ```
     #[inline]
@@ -852,9 +967,9 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert_eq!(bitmap.last(), None);
     ///
-    /// bitmap.set(10, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(20, true);
+    /// bitmap.insert(10);
+    /// bitmap.insert(5);
+    /// bitmap.insert(20);
     /// assert_eq!(bitmap.last(), Some(20));
     /// ```
     #[inline]
@@ -880,9 +995,9 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(5, true);
-    /// bitmap.set(10, true);
-    /// bitmap.set(15, true);
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
+    /// bitmap.insert(15);
     /// assert_eq!(bitmap.count_ones(), 3);
     /// ```
     #[inline]
@@ -901,8 +1016,8 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(5, true);
-    /// bitmap.set(10, true);
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
     /// let zeros = bitmap.count_zeros();
     /// assert_eq!(zeros, bitmap.capacity() - 2);
     /// ```
@@ -912,68 +1027,7 @@ impl SmolBitmap {
         total_bits - self.count_ones()
     }
 
-    /// Flips all bits in the bitmap up to the specified bit index.
-    ///
-    /// This creates a new bitmap where each bit from 0 to `max_bit` (inclusive)
-    /// is inverted. Bits beyond `max_bit` are not included in the result.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use smol_bitmap::SmolBitmap;
-    /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
-    ///
-    /// let flipped = bitmap.complement(4);
-    /// assert!(flipped.get(0)); // Was false, now true
-    /// assert!(!flipped.get(1)); // Was true, now false
-    /// assert!(flipped.get(2)); // Was false, now true
-    /// assert!(!flipped.get(3)); // Was true, now false
-    /// assert!(flipped.get(4)); // Was false, now true
-    /// ```
-    #[must_use]
-    pub fn complement(&self, max_bit: usize) -> Self {
-        let mut result = Self::with_capacity(max_bit + 1);
-        let (last_word_idx, last_bit_idx) = bitpos(max_bit);
-
-        result.update(|rb| {
-            let self_slice = self.as_slice();
-            let num_words = last_word_idx + 1;
-
-            // Ensure we have enough capacity - need at least WORDS_MINEXT for external
-            // storage
-            if num_words > rb.len() {
-                rb.extend_to(num_words, !0);
-            } else {
-                // Already have enough capacity, just fill what we need
-                for i in 0..num_words {
-                    rb[i] = !0;
-                }
-            }
-
-            // Apply NOT operation word by word
-            for i in 0..num_words.min(self_slice.len()) {
-                rb[i] = !self_slice[i];
-            }
-
-            // For words beyond self's length, they're already all 1s from fill above
-
-            // Mask the last word to only include bits up to max_bit
-            if last_word_idx < rb.len() {
-                let mask = if last_bit_idx == 63 {
-                    !0u64
-                } else {
-                    (1u64 << (last_bit_idx + 1)) - 1
-                };
-                rb[last_word_idx] &= mask;
-            }
-        });
-
-        result
-    }
-
-    /// Toggles the bit at the specified index.
+    /// Complements the bit at the specified index.
     ///
     /// If the bit was set, it becomes unset. If it was unset, it becomes set.
     ///
@@ -984,16 +1038,42 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert!(!bitmap.get(5));
     ///
-    /// bitmap.toggle(5);
+    /// bitmap.complement(5);
     /// assert!(bitmap.get(5));
     ///
-    /// bitmap.toggle(5);
+    /// bitmap.complement(5);
     /// assert!(!bitmap.get(5));
     /// ```
     #[inline]
-    pub fn toggle(&mut self, i: usize) {
-        let current = self.get(i);
-        self.set(i, !current);
+    pub fn complement(&mut self, i: usize) -> bool {
+        // Check if we need to grow
+        let cap = self.capacity();
+        if let Some(grow) = i.checked_sub(cap) {
+            self.reserve(grow + 1);
+        }
+
+        // Compute word index and bit position
+        let (idx, bp) = bitpos!(i);
+
+        // Get a fresh slice after potential reallocation
+        // SAFETY: reserve() ensures wi is within bounds of the slice
+        let word = unsafe {
+            let slice = self.as_mut_slice();
+            // The word index should now be valid after reserve
+            debug_assert!(
+                idx < slice.len(),
+                "word index {} >= slice len {}",
+                idx,
+                slice.len()
+            );
+            slice.get_unchecked_mut(idx)
+        };
+
+        let mask = 1 << bp;
+
+        let prev = *word;
+        *word = prev ^ mask;
+        (prev & mask) != 0
     }
 
     /// Returns the index of the next set bit at or after the given index.
@@ -1005,9 +1085,9 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(5, true);
-    /// bitmap.set(10, true);
-    /// bitmap.set(15, true);
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
+    /// bitmap.insert(15);
     ///
     /// assert_eq!(bitmap.next_set_bit(0), Some(5));
     /// assert_eq!(bitmap.next_set_bit(6), Some(10));
@@ -1016,13 +1096,13 @@ impl SmolBitmap {
     /// ```
     #[inline]
     #[must_use]
-    pub fn next_set_bit(&self, from: usize) -> Option<usize> {
-        if from >= self.capacity() {
+    pub fn next_set_bit(&self, beg: usize) -> Option<usize> {
+        if beg >= self.capacity() {
             return None;
         }
         let slice = self.as_slice();
         let cap = self.capacity();
-        let (mut wi, bi) = bitpos(from);
+        let (mut wi, bi) = bitpos!(beg);
 
         if wi >= slice.len() {
             return None;
@@ -1059,9 +1139,9 @@ impl SmolBitmap {
     /// ```
     /// # use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(5, true);
-    /// bitmap.set(10, true);
-    /// bitmap.set(15, true);
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
+    /// bitmap.insert(15);
     ///
     /// assert_eq!(bitmap.prev_set_bit(20), Some(15));
     /// assert_eq!(bitmap.prev_set_bit(14), Some(10));
@@ -1077,7 +1157,7 @@ impl SmolBitmap {
         let cap = self.capacity();
         let idx = from.min(cap - 1);
         let slice = self.as_slice();
-        let (mut wi, bi) = bitpos(idx);
+        let (mut wi, bi) = bitpos!(idx);
 
         if wi >= slice.len() {
             if slice.is_empty() {
@@ -1124,9 +1204,9 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(1, true);
-    /// bitmap.set(2, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(1);
+    /// bitmap.insert(2);
     ///
     /// let shifted = bitmap.shl(2);
     /// assert!(!shifted.get(0));
@@ -1148,7 +1228,7 @@ impl SmolBitmap {
 
         // Calculate shift amounts
         let word_shift = n >> 6; // n / 64
-        let bit_shift = n & 63; // n % 64
+        let shift = (n & 63) as u32; // n % 64
 
         // Calculate result size - find highest set bit and add shift
         let last_bit = self.last().unwrap_or(0);
@@ -1162,22 +1242,22 @@ impl SmolBitmap {
             builder.push(0);
         }
 
-        if bit_shift == 0 {
+        if shift == 0 {
             // Simple case: just copy words
             builder.extend_from_slice(slice);
         } else {
             // Complex case: shift within words
             let mut carry = 0u64;
             for &word in slice {
-                builder.push(carry | (word << bit_shift));
-                carry = word >> (64 - bit_shift);
+                builder.push(carry | (word << shift));
+                carry = word.wrapping_shr(shift.wrapping_neg());
             }
             if carry != 0 {
                 builder.push(carry);
             }
         }
 
-        builder.finalize()
+        builder.into()
     }
 
     /// Shifts all bits right by `n` positions.
@@ -1190,9 +1270,9 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(2, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(4, true);
+    /// bitmap.insert(2);
+    /// bitmap.insert(3);
+    /// bitmap.insert(4);
     ///
     /// let shifted = bitmap.shr(2);
     /// assert!(shifted.get(0));
@@ -1212,11 +1292,9 @@ impl SmolBitmap {
             return Self::new();
         }
 
-        // Calculate shift amounts
-        let word_shift = n >> 6; // n / 64
-        let bit_shift = n & 63; // n % 64
-
         // Skip words that will be shifted out completely
+        let (word_shift, shift) = bitpos!(n);
+        let shift = shift as u32;
         if word_shift >= slice.len() {
             return Self::new();
         }
@@ -1224,50 +1302,26 @@ impl SmolBitmap {
         let remaining_words = slice.len() - word_shift;
         let mut builder = SmolBitmapBuilder::with_capacity(remaining_words);
 
-        if bit_shift == 0 {
+        if shift == 0 {
             // Simple case: just copy words from offset
             builder.extend_from_slice(&slice[word_shift..]);
         } else {
-            // Complex case: shift within words
-            let shifted_slice = &slice[word_shift..];
-            for i in 0..shifted_slice.len() {
-                let low_bits = shifted_slice[i] >> bit_shift;
-                let high_bits = if i + 1 < shifted_slice.len() {
-                    shifted_slice[i + 1] << (64 - bit_shift)
-                } else {
-                    0
-                };
-                builder.push(low_bits | high_bits);
+            builder.resize(remaining_words, 0);
+            let output = builder.as_mut_slice();
+
+            let mut carry = 0u64;
+            for (output, &input) in output.iter_mut().zip(&slice[word_shift..]).rev() {
+                *output = input >> shift | carry;
+                carry = input.wrapping_shl(shift.wrapping_neg());
             }
         }
 
-        builder.finalize()
+        builder.into()
     }
 
     // ========================================================================
     // Convenience Methods
     // ========================================================================
-
-    /// Returns `true` if any bit is set.
-    ///
-    /// This is equivalent to `!self.is_empty()`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use smol_bitmap::SmolBitmap;
-    ///
-    /// let mut bitmap = SmolBitmap::new();
-    /// assert!(!bitmap.any());
-    ///
-    /// bitmap.set(42, true);
-    /// assert!(bitmap.any());
-    /// ```
-    #[inline]
-    #[must_use]
-    pub fn any(&self) -> bool {
-        !self.is_empty()
-    }
 
     /// Counts the number of leading zero bits (from bit 0 upward).
     ///
@@ -1281,10 +1335,10 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert_eq!(bitmap.leading_zeros(), None);
     ///
-    /// bitmap.set(3, true);
+    /// bitmap.insert(3);
     /// assert_eq!(bitmap.leading_zeros(), Some(3));
     ///
-    /// bitmap.set(0, true);
+    /// bitmap.insert(0);
     /// assert_eq!(bitmap.leading_zeros(), Some(0));
     /// ```
     #[must_use]
@@ -1303,9 +1357,9 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(10, true);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
     ///
     /// // 4 trailing zeros from bit 10 down to bit 6 (bit 5 is set)
     /// assert_eq!(bitmap.trailing_zeros(), Some(4));
@@ -1327,10 +1381,10 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(1, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(4, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(1);
+    /// bitmap.insert(2);
+    /// bitmap.insert(4);
     ///
     /// assert_eq!(bitmap.leading_ones(), 3);
     /// ```
@@ -1361,10 +1415,10 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(2, true);
-    /// bitmap.set(4, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(6, true);
+    /// bitmap.insert(2);
+    /// bitmap.insert(4);
+    /// bitmap.insert(5);
+    /// bitmap.insert(6);
     ///
     /// assert_eq!(bitmap.trailing_ones(), 3);
     /// ```
@@ -1414,9 +1468,9 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert_eq!(bitmap.find_first_zero(), Some(0));
     ///
-    /// bitmap.set(0, true);
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
     /// assert_eq!(bitmap.find_first_zero(), Some(2));
     /// ```
     #[must_use]
@@ -1447,9 +1501,9 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(5, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(2);
+    /// bitmap.insert(5);
     ///
     /// // The last unset bit before bit 5
     /// assert_eq!(bitmap.find_last_zero(), Some(4));
@@ -1477,21 +1531,21 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
     ///
     /// assert_eq!(bitmap.find_next_zero(0), Some(2));
     /// assert_eq!(bitmap.find_next_zero(2), Some(2));
     /// assert_eq!(bitmap.find_next_zero(3), Some(4));
     /// ```
     #[must_use]
-    pub fn find_next_zero(&self, from: usize) -> Option<usize> {
-        if from >= self.capacity() {
+    pub fn find_next_zero(&self, beg: usize) -> Option<usize> {
+        if beg >= self.capacity() {
             return None;
         }
 
-        let (mut wi, bi) = bitpos(from);
+        let (mut wi, bi) = bitpos!(beg);
         let slice = self.as_slice();
 
         // Check the first word (partial)
@@ -1535,9 +1589,9 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
     ///
     /// assert_eq!(bitmap.find_prev_zero(5), Some(4));
     /// assert_eq!(bitmap.find_prev_zero(3), Some(2));
@@ -1546,7 +1600,7 @@ impl SmolBitmap {
     #[must_use]
     pub fn find_prev_zero(&self, from: usize) -> Option<usize> {
         let from = from.min(self.capacity().saturating_sub(1));
-        let (mut wi, bi) = bitpos(from);
+        let (mut wi, bi) = bitpos!(from);
         let slice = self.as_slice();
 
         // Check the first word (partial)
@@ -1584,7 +1638,7 @@ impl SmolBitmap {
         None
     }
 
-    /// Counts the number of set bits in the range [start, end).
+    /// Counts the number of set bits in the range [beg, end).
     ///
     /// # Examples
     ///
@@ -1592,43 +1646,43 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
-    /// bitmap.set(7, true);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
+    /// bitmap.insert(7);
     ///
     /// assert_eq!(bitmap.count_ones_range(0, 4), 2); // bits 1 and 3
     /// assert_eq!(bitmap.count_ones_range(2, 8), 3); // bits 3, 5, and 7
     /// ```
     #[must_use]
-    pub fn count_ones_range(&self, start: usize, end: usize) -> usize {
-        if start >= end {
+    pub fn count_ones_range(&self, beg: usize, end: usize) -> usize {
+        if beg >= end {
             return 0;
         }
 
         let mut count = 0;
         let slice = self.as_slice();
-        let (start_wi, start_bi) = bitpos(start);
-        let (end_wi, end_bi) = bitpos(end);
+        let (beg_wi, beg_bi) = bitpos!(beg);
+        let (end_wi, end_bi) = bitpos!(end);
 
-        if start_wi == end_wi {
+        if beg_wi == end_wi {
             // Range within single word
-            if start_wi < slice.len() {
-                let mask = ((1u64 << (end_bi - start_bi)) - 1) << start_bi;
-                count = (slice[start_wi] & mask).count_ones() as usize;
+            if beg_wi < slice.len() {
+                let mask = ((1u64 << (end_bi - beg_bi)) - 1) << beg_bi;
+                count = (slice[beg_wi] & mask).count_ones() as usize;
             }
         } else {
             // First word (partial)
-            if start_wi < slice.len() {
-                let mask = !0u64 << start_bi;
-                count += (slice[start_wi] & mask).count_ones() as usize;
+            if beg_wi < slice.len() {
+                let mask = !0u64 << beg_bi;
+                count += (slice[beg_wi] & mask).count_ones() as usize;
             }
 
             // Middle words (full)
             count += slice
                 .iter()
                 .take(end_wi)
-                .skip(start_wi + 1)
+                .skip(beg_wi + 1)
                 .map(|&item| item.count_ones() as usize)
                 .sum::<usize>();
 
@@ -1642,7 +1696,7 @@ impl SmolBitmap {
         count
     }
 
-    /// Counts the number of unset bits in the range [start, end).
+    /// Counts the number of unset bits in the range [beg, end).
     ///
     /// # Examples
     ///
@@ -1650,20 +1704,20 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
     ///
     /// assert_eq!(bitmap.count_zeros_range(0, 4), 2); // bits 0 and 2
     /// assert_eq!(bitmap.count_zeros_range(0, 8), 6); // 8 - 2 set bits
     /// ```
     #[must_use]
-    pub fn count_zeros_range(&self, start: usize, end: usize) -> usize {
-        if start >= end {
+    pub fn count_zeros_range(&self, beg: usize, end: usize) -> usize {
+        if beg >= end {
             return 0;
         }
 
-        let range_size = end - start;
-        let ones = self.count_ones_range(start, end);
+        let range_size = end - beg;
+        let ones = self.count_ones_range(beg, end);
         range_size - ones
     }
 
@@ -1679,8 +1733,8 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(5, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(5);
     ///
     /// bitmap.set_all();
     /// assert!(bitmap.get(0));
@@ -1691,8 +1745,8 @@ impl SmolBitmap {
     /// assert!(bitmap.get(5));
     /// ```
     pub fn set_all(&mut self) {
-        if let Some(max_bit) = self.last() {
-            let (last_word_idx, last_bit_idx) = bitpos(max_bit);
+        if let Some(end) = self.last() {
+            let (last_word_idx, last_bit_idx) = bitpos!(end);
             // SAFETY: We're setting bits within the valid range
             unsafe {
                 let slice = self.as_mut_slice();
@@ -1710,11 +1764,11 @@ impl SmolBitmap {
         }
     }
 
-    /// Clears bits in the range [start, end).
+    /// Clears bits in the range [beg, end).
     ///
     /// # Panics
     ///
-    /// Panics if start > end.
+    /// Panics if beg > end.
     ///
     /// # Examples
     ///
@@ -1723,7 +1777,7 @@ impl SmolBitmap {
     ///
     /// let mut bitmap = SmolBitmap::new();
     /// for i in 0..10 {
-    ///     bitmap.set(i, true);
+    ///     bitmap.insert(i);
     /// }
     ///
     /// bitmap.clear_range(3, 7);
@@ -1732,33 +1786,33 @@ impl SmolBitmap {
     /// assert!(!bitmap.get(6));
     /// assert!(bitmap.get(7));
     /// ```
-    pub fn clear_range(&mut self, start: usize, end: usize) {
-        debug_assert!(start <= end, "start must be <= end");
+    pub fn clear_range(&mut self, beg: usize, end: usize) {
+        debug_assert!(beg <= end, "beg must be <= end");
 
-        let (start_wi, start_bi) = bitpos(start);
-        let (end_wi, end_bi) = bitpos(end);
+        let (beg_wi, beg_bi) = bitpos!(beg);
+        let (end_wi, end_bi) = bitpos!(end);
 
         // SAFETY: We're clearing bits within valid range
         unsafe {
             let slice = self.as_mut_slice();
 
-            if start_wi == end_wi {
+            if beg_wi == end_wi {
                 // Range within single word
-                if start_wi < slice.len() {
-                    let mask = ((1u64 << (end_bi - start_bi)) - 1) << start_bi;
-                    slice[start_wi] &= !mask;
+                if beg_wi < slice.len() {
+                    let mask = ((1u64 << (end_bi - beg_bi)) - 1) << beg_bi;
+                    slice[beg_wi] &= !mask;
                 }
             } else {
                 // First word (partial)
-                if start_wi < slice.len() {
-                    let mask = !0u64 << start_bi;
-                    slice[start_wi] &= !mask;
+                if beg_wi < slice.len() {
+                    let mask = !0u64 << beg_bi;
+                    slice[beg_wi] &= !mask;
                 }
 
                 // Middle words (full)
                 let end = end_wi.min(slice.len());
-                if start_wi + 1 < end {
-                    slice[start_wi + 1..end].fill(0);
+                if beg_wi + 1 < end {
+                    slice[beg_wi + 1..end].fill(0);
                 }
 
                 // Last word (partial)
@@ -1770,11 +1824,74 @@ impl SmolBitmap {
         }
     }
 
-    /// Sets all bits bits in the range [start, end).
+    /// Complements all bits in the range [beg, end).
     ///
     /// # Panics
     ///
-    /// Panics if start > end.
+    /// Panics if beg > end.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(2);
+    /// bitmap.insert(4);
+    ///
+    /// bitmap.complement_range(1, 6);
+    ///
+    /// assert!(bitmap.get(1));
+    /// assert!(!bitmap.get(2));
+    /// assert!(bitmap.get(3));
+    /// assert!(!bitmap.get(4));
+    /// assert!(bitmap.get(5));
+    /// ```
+    pub fn complement_range(&mut self, beg: usize, end: usize) {
+        debug_assert!(beg <= end, "beg must be <= end");
+
+        let (beg_wi, beg_bi) = bitpos!(beg);
+        let (end_wi, end_bi) = bitpos!(end);
+
+        // SAFETY: We're complementing bits within valid range
+        unsafe {
+            let slice = self.as_mut_slice();
+
+            if beg_wi == end_wi {
+                // Range within single word
+                if beg_wi < slice.len() {
+                    let mask = ((1u64 << (end_bi - beg_bi)) - 1) << beg_bi;
+                    slice[beg_wi] ^= mask;
+                }
+            } else {
+                // First word (partial)
+                if beg_wi < slice.len() {
+                    let mask = !0u64 << beg_bi;
+                    slice[beg_wi] ^= mask;
+                }
+
+                // Middle words (full)
+                let end = end_wi.min(slice.len());
+                if beg_wi + 1 < end {
+                    for word in &mut slice[beg_wi + 1..end] {
+                        *word = !*word;
+                    }
+                }
+
+                // Last word (partial)
+                if end_wi < slice.len() && end_bi > 0 {
+                    let mask = (1u64 << end_bi) - 1;
+                    slice[end_wi] ^= mask;
+                }
+            }
+        }
+    }
+
+    /// Sets all bits bits in the range [beg, end).
+    ///
+    /// # Panics
+    ///
+    /// Panics if beg > end.
     ///
     /// # Examples
     ///
@@ -1790,33 +1907,33 @@ impl SmolBitmap {
     /// assert!(bitmap.get(5));
     /// assert!(!bitmap.get(6));
     /// ```
-    pub fn set_range(&mut self, start: usize, end: usize) {
-        debug_assert!(start <= end, "start must be <= end");
+    pub fn set_range(&mut self, beg: usize, end: usize) {
+        debug_assert!(beg <= end, "beg must be <= end");
 
-        let (start_wi, start_bi) = bitpos(start);
-        let (end_wi, end_bi) = bitpos(end);
+        let (beg_wi, beg_bi) = bitpos!(beg);
+        let (end_wi, end_bi) = bitpos!(end);
 
         // SAFETY: We're clearing bits within valid range
         unsafe {
             let slice = self.as_mut_slice();
 
-            if start_wi == end_wi {
+            if beg_wi == end_wi {
                 // Range within single word
-                if start_wi < slice.len() {
-                    let mask = ((1u64 << (end_bi - start_bi)) - 1) << start_bi;
-                    slice[start_wi] |= mask;
+                if beg_wi < slice.len() {
+                    let mask = ((1u64 << (end_bi - beg_bi)) - 1) << beg_bi;
+                    slice[beg_wi] |= mask;
                 }
             } else {
                 // First word (partial)
-                if start_wi < slice.len() {
-                    let mask = !0u64 << start_bi;
-                    slice[start_wi] |= mask;
+                if beg_wi < slice.len() {
+                    let mask = !0u64 << beg_bi;
+                    slice[beg_wi] |= mask;
                 }
 
                 // Middle words (full)
                 let end = end_wi.min(slice.len());
-                if start_wi + 1 < end {
-                    slice[start_wi + 1..end].fill(!0);
+                if beg_wi + 1 < end {
+                    slice[beg_wi + 1..end].fill(!0);
                 }
 
                 // Last word (partial)
@@ -1828,7 +1945,7 @@ impl SmolBitmap {
         }
     }
 
-    /// Sets all bits in the range [start, end) to the specified value.
+    /// Sets all bits in the range [beg, end) to the specified value.
     ///
     /// # Examples
     ///
@@ -1849,44 +1966,44 @@ impl SmolBitmap {
     /// assert!(!bitmap.get(8));
     /// assert!(bitmap.get(9));
     /// ```
-    pub fn set_range_value(&mut self, start: usize, end: usize, value: bool) {
-        if start >= end {
+    pub fn set_range_value(&mut self, beg: usize, end: usize, value: bool) {
+        if beg >= end {
             return;
         }
 
-        let (start_wi, start_bi) = bitpos(start);
-        let (end_wi, end_bi) = bitpos(end);
+        let (beg_wi, beg_bi) = bitpos!(beg);
+        let (end_wi, end_bi) = bitpos!(end);
 
         // SAFETY: We're clearing bits within valid range
         unsafe {
             let slice = self.as_mut_slice();
 
-            if start_wi == end_wi {
+            if beg_wi == end_wi {
                 // Range within single word
-                if start_wi < slice.len() {
-                    let mask = ((1u64 << (end_bi - start_bi)) - 1) << start_bi;
+                if beg_wi < slice.len() {
+                    let mask = ((1u64 << (end_bi - beg_bi)) - 1) << beg_bi;
                     if value {
-                        slice[start_wi] |= mask;
+                        slice[beg_wi] |= mask;
                     } else {
-                        slice[start_wi] &= !mask;
+                        slice[beg_wi] &= !mask;
                     }
                 }
             } else {
                 // First word (partial)
-                if start_wi < slice.len() {
-                    let mask = !0u64 << start_bi;
+                if beg_wi < slice.len() {
+                    let mask = !0u64 << beg_bi;
                     if value {
-                        slice[start_wi] |= mask;
+                        slice[beg_wi] |= mask;
                     } else {
-                        slice[start_wi] &= !mask;
+                        slice[beg_wi] &= !mask;
                     }
                 }
 
                 // Middle words (full)
                 let filler = if value { !0 } else { 0 };
                 let end = end_wi.min(slice.len());
-                if start_wi + 1 < end {
-                    slice[start_wi + 1..end].fill(filler);
+                if beg_wi + 1 < end {
+                    slice[beg_wi + 1..end].fill(filler);
                 }
 
                 // Last word (partial)
@@ -1910,7 +2027,7 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(10, true); // This determines a capacity
+    /// bitmap.insert(10); // This determines a capacity
     ///
     /// bitmap.fill(true);
     /// // All bits from 0 to 10 are now true
@@ -1921,8 +2038,8 @@ impl SmolBitmap {
     pub fn fill(&mut self, value: bool) {
         if value {
             // Set all bits to true up to the max set bit (or capacity)
-            if let Some(max_bit) = self.last() {
-                let (last_word_idx, last_bit_idx) = bitpos(max_bit);
+            if let Some(end) = self.last() {
+                let (last_word_idx, last_bit_idx) = bitpos!(end);
                 // SAFETY: We're setting bits within the valid range
                 unsafe {
                     let slice = self.as_mut_slice();
@@ -1945,170 +2062,17 @@ impl SmolBitmap {
     }
 
     // ========================================================================
-    // Bytes Conversion
-    // ========================================================================
-
-    /// Converts the bitmap to little-endian bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use smol_bitmap::SmolBitmap;
-    ///
-    /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(7, true);
-    /// bitmap.set(8, true);
-    ///
-    /// let bytes = bitmap.to_bytes_le();
-    /// assert_eq!(bytes[0], 0b10000001); // bits 0 and 7
-    /// assert_eq!(bytes[1], 0b00000001); // bit 8
-    /// ```
-    #[must_use]
-    pub fn to_bytes_le(&self) -> Vec<u8> {
-        let slice = self.as_slice_rtrim();
-        let mut bytes = Vec::with_capacity(slice.len() * 8);
-        if slice.is_empty() {
-            return bytes;
-        }
-
-        for &word in slice {
-            bytes.extend_from_slice(&word.to_le_bytes());
-        }
-
-        // Trim trailing zeros
-        while bytes.last() == Some(&0) {
-            bytes.pop();
-        }
-
-        bytes
-    }
-
-    /// Converts the bitmap to big-endian bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use smol_bitmap::SmolBitmap;
-    ///
-    /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(7, true);
-    ///
-    /// let bytes = bitmap.to_bytes_be();
-    /// // Big-endian representation
-    /// ```
-    #[must_use]
-    pub fn to_bytes_be(&self) -> Vec<u8> {
-        let slice = self.as_slice_rtrim();
-        let mut bytes = Vec::with_capacity(slice.len() * 8);
-        if slice.is_empty() {
-            return bytes;
-        }
-
-        // Process words in reverse order for big-endian
-        for &word in slice.iter().rev() {
-            bytes.extend_from_slice(&word.to_be_bytes());
-        }
-
-        // Find first non-zero byte and remove leading zeros in one pass
-        if let Some(first_nz) = bytes.iter().position(|&b| b != 0) {
-            bytes.drain(..first_nz);
-        } else {
-            bytes.clear(); // All zeros
-        }
-
-        bytes
-    }
-
-    /// Constructs a bitmap from little-endian bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use smol_bitmap::SmolBitmap;
-    ///
-    /// let bytes = vec![0b10000001, 0b00000001];
-    /// let bitmap = SmolBitmap::from_bytes_le(&bytes);
-    ///
-    /// assert!(bitmap.get(0)); // bit 0 from byte 0
-    /// assert!(bitmap.get(7)); // bit 7 from byte 0
-    /// assert!(bitmap.get(8)); // bit 0 from byte 1
-    /// ```
-    #[must_use]
-    pub fn from_bytes_le(bytes: &[u8]) -> Self {
-        if bytes.is_empty() {
-            return Self::new();
-        }
-
-        let mut words = SmolBitmapBuilder::with_capacity(bytes.len().div_ceil(8));
-
-        let (chunks, rest) = bytes.as_chunks();
-        for chunk in chunks {
-            words.push(u64::from_le_bytes(*chunk));
-        }
-        if !rest.is_empty() {
-            let mut word_bytes = [0u8; 8];
-            word_bytes[..rest.len()].copy_from_slice(rest);
-            words.push(u64::from_le_bytes(word_bytes));
-        }
-
-        words.finalize()
-    }
-
-    /// Constructs a bitmap from big-endian bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use smol_bitmap::SmolBitmap;
-    ///
-    /// let bytes = vec![0x01, 0x00]; // Big-endian representation
-    /// let bitmap = SmolBitmap::from_bytes_be(&bytes);
-    ///
-    /// assert!(bitmap.get(8)); // The high bit of the first byte
-    /// ```
-    #[must_use]
-    pub fn from_bytes_be(bytes: &[u8]) -> Self {
-        if bytes.is_empty() {
-            return Self::new();
-        }
-
-        // Process bytes in chunks of 8 (word size)
-        let mut words = SmolBitmapBuilder::with_capacity(bytes.len().div_ceil(8));
-
-        // Process from the end for big-endian
-        let mut remaining = bytes;
-        while !remaining.is_empty() {
-            let chunk_size = remaining.len().min(8);
-            let start = remaining.len() - chunk_size;
-            let chunk = &remaining[start..];
-
-            let mut word_bytes = [0u8; 8];
-            // Right-align the bytes in the word
-            word_bytes[(8 - chunk_size)..].copy_from_slice(chunk);
-            words.push(u64::from_be_bytes(word_bytes));
-
-            remaining = &remaining[..start];
-        }
-
-        // Push words in reverse order (since we processed from the end)
-        words.as_mut_slice().reverse();
-        words.finalize()
-    }
-
-    // ========================================================================
     // Range Operations
     // ========================================================================
 
-    /// Extracts bits in the range [start, end) as a u64 value.
+    /// Extracts bits in the range [beg, end) as a u64 value.
     ///
     /// Returns up to 64 bits. If the range is larger than 64 bits, only the
     /// first 64 bits are returned.
     ///
     /// # Panics
     ///
-    /// Panics if start > end.
+    /// Panics if beg > end.
     ///
     /// # Examples
     ///
@@ -2116,24 +2080,24 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(3, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(2);
+    /// bitmap.insert(3);
     ///
     /// // Extract bits 0-4: 1101 in binary = 13 in decimal
     /// assert_eq!(bitmap.get_range(0, 4), 0b1101);
     /// ```
     #[must_use]
-    pub fn get_range(&self, start: usize, end: usize) -> u64 {
-        debug_assert!(start <= end, "start must be <= end");
+    pub fn get_range(&self, beg: usize, end: usize) -> u64 {
+        debug_assert!(beg <= end, "beg must be <= end");
 
-        let len = (end - start).min(64);
+        let len = (end - beg).min(64);
         if len == 0 {
             return 0;
         }
 
         let slice = self.as_slice();
-        let (w0, b0) = bitpos(start);
+        let (w0, b0) = bitpos!(beg);
         if w0 >= slice.len() {
             return 0;
         }
@@ -2151,6 +2115,184 @@ impl SmolBitmap {
                 0
             };
             lo | (hi << lo_bits)
+        }
+    }
+
+    /// Extracts a 64-bit word at the given word index.
+    ///
+    /// This method returns the word at the specified index. For inline storage,
+    /// if reading the last word (index 1), bit 127 (the MSB) is cleared to hide
+    /// the storage mode indicator.
+    ///
+    /// # Arguments
+    ///
+    /// * `word_idx` - The word index to extract (0-based)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(0);
+    /// bitmap.insert(63);
+    /// bitmap.insert(64);
+    /// bitmap.insert(126);
+    ///
+    /// assert_eq!(bitmap.extract_word(0), (1u64 << 63) | 1);
+    /// assert_eq!(bitmap.extract_word(1), (1u64 << 62) | 1); // bit 127 is masked
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn extract_word(&self, word_idx: usize) -> u64 {
+        *self.as_slice().get(word_idx).unwrap_or(&0)
+    }
+
+    /// Inserts a 64-bit word at the given word index.
+    ///
+    /// This method sets the word at the specified index. If the bitmap is using
+    /// inline storage and bit 127 would be set (MSB of the last word), the
+    /// bitmap is automatically promoted to heap storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `word_idx` - The word index to write to (0-based)
+    /// * `word` - The 64-bit word to insert
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    ///
+    /// // Set word 0
+    /// bitmap.put_word(0, 0xFFFF_FFFF_FFFF_FFFF);
+    /// assert!(!bitmap.is_spilled());
+    ///
+    /// // Setting MSB of word 1 causes promotion to heap
+    /// bitmap.put_word(1, 0x8000_0000_0000_0000);
+    /// assert!(bitmap.is_spilled());
+    /// ```
+    #[inline]
+    pub fn put_word(&mut self, word_idx: usize, word: u64) {
+        let dst = match (self.is_spilled(), word_idx, word) {
+            // External & Within Capacity
+            (true, i, _) => unsafe { self.as_mut_slice().get_mut(i) },
+            // Inline & Cannot affect MSB
+            (false, 0, _) => self.array.get_mut(0),
+            // Inline & Does not affect MSB
+            (false, 1, w) if !msb!(w) => self.array.get_mut(1),
+            // Out of bounds
+            (false, _, _) => None,
+        };
+        if let Some(p) = dst {
+            *p = word;
+            return;
+        }
+
+        self.update(|rb| {
+            // Ensure we have capacity for this word
+            rb.extend_to(word_idx + 1, 0);
+
+            // Set the word
+            // SAFETY: We've checked that word_idx is within bounds
+            unsafe { *rb.get_unchecked_mut(word_idx) = word };
+        });
+    }
+
+    /// Resizes the bitmap to contain exactly `new_bits` bits.
+    ///
+    /// If `new_bits` is greater than the current capacity, the bitmap is
+    /// extended with zeros. If `new_bits` is less than the current
+    /// capacity, the bitmap is truncated.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_bits` - The new size in bits
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(50);
+    /// bitmap.insert(100);
+    ///
+    /// // Resize to 75 bits - bit 100 will be removed
+    /// bitmap.resize(75);
+    /// assert!(bitmap.get(50));
+    /// assert!(!bitmap.get(100));
+    ///
+    /// // Resize to 200 bits - expands with zeros
+    /// bitmap.resize(200);
+    /// assert!(bitmap.is_spilled()); // Beyond inline capacity
+    /// ```
+    pub fn resize(&mut self, new_bits: usize) {
+        let current_capacity = self.capacity();
+
+        if new_bits == current_capacity {
+            return;
+        }
+
+        if new_bits > current_capacity {
+            // Expanding - just reserve the additional capacity
+            self.reserve(new_bits - current_capacity);
+        } else {
+            // Shrinking - truncate to the new size
+            self.truncate(new_bits);
+        }
+    }
+
+    /// Truncates the bitmap to contain at most `max_bits` bits.
+    ///
+    /// If `max_bits` is greater than or equal to the current highest set bit,
+    /// this has no effect. Otherwise, all bits at positions >= `max_bits` are
+    /// cleared.
+    ///
+    /// This method may also shrink the storage if the truncation allows the
+    /// bitmap to fit back into inline storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_bits` - The maximum number of bits to keep
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(50);
+    /// bitmap.insert(100);
+    /// bitmap.insert(150);
+    ///
+    /// // Truncate to 120 bits - bit 150 will be removed
+    /// bitmap.truncate(120);
+    /// assert!(bitmap.get(50));
+    /// assert!(bitmap.get(100));
+    /// assert!(!bitmap.get(150));
+    ///
+    /// // Further truncation
+    /// bitmap.truncate(60);
+    /// assert!(bitmap.get(50));
+    /// assert!(!bitmap.get(100));
+    /// ```
+    pub fn truncate(&mut self, max_bits: usize) {
+        if max_bits == 0 {
+            self.clear();
+            return;
+        }
+
+        let (last_word_idx, last_bit_idx) = bitpos!(max_bits - 1);
+        let (used, discard) = unsafe { self.as_mut_slice().split_at_mut(last_word_idx + 1) };
+        discard.fill(0);
+
+        // Clear the high bits in the last word if needed
+        if last_bit_idx < 63 {
+            let mask = (1u64 << (last_bit_idx + 1)) - 1;
+            used[last_word_idx] &= mask;
         }
     }
 }
@@ -2178,7 +2320,7 @@ impl Index<usize> for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(5, true);
+    /// bitmap.insert(5);
     ///
     /// assert_eq!(*bitmap.index(5), true);
     /// assert_eq!(*bitmap.index(0), false);
@@ -2206,31 +2348,59 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(2, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
+    /// bitmap.insert(2);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
     ///
-    /// let sub = bitmap.get_range_bitmap(2, 6);
+    /// let sub = bitmap.bitslice(2, 6);
     /// assert!(sub.get(0)); // bit 2 -> 0
     /// assert!(sub.get(1)); // bit 3 -> 1
     /// assert!(!sub.get(2)); // bit 4 -> 2
     /// assert!(sub.get(3)); // bit 5 -> 3
     /// ```
     #[must_use]
-    pub fn get_range_bitmap(&self, start: usize, end: usize) -> Self {
-        let mut result = Self::new();
+    pub fn bitslice(&self, beg: usize, end: usize) -> Self {
+        let end = end.min(self.capacity());
+        let bits = match end.checked_sub(beg) {
+            None | Some(0) => return Self::new(),
+            Some(bits) => bits,
+        };
+        let n = bits.div_ceil(64); // exact # of words in the RESULT
+        let mut buf = SmolBitmapBuilder::with_capacity(n);
 
-        if start >= end {
-            return result;
-        }
+        let (wi, bi) = bitpos!(beg);
+        let slice = self.as_slice();
+        if bi == 0 {
+            // Word-aligned: copy exactly the words we need.
+            buf.extend_from_slice(&slice[wi..wi + n]);
+        } else {
+            // Misaligned: each output word is (v0 >> s) | (v1 << (64 - s)).
+            let out = buf.spare_capacity_mut();
+            let shift = bi as u32;
+            let ishift = shift.wrapping_neg() & 63;
 
-        for (new_idx, old_idx) in (start..end).enumerate() {
-            if self.get(old_idx) {
-                result.set(new_idx, true);
+            let input = &slice[wi..wi + n];
+            let output = &mut out[..n];
+            let mut carry = slice.get(wi + n).unwrap_or(&0) << ishift;
+
+            for (output, &input) in output.iter_mut().zip(input).rev() {
+                output.write((input >> shift) | carry);
+                carry = input << ishift;
+            }
+
+            unsafe {
+                buf.set_len(n);
             }
         }
 
-        result
+        // Mask the final partial word to the exact bit-width of the range.
+        let rem = bits & 63;
+        if rem != 0 {
+            let last = buf.as_mut_slice().last_mut().unwrap();
+            *last &= (1u64 << rem) - 1;
+        }
+
+        buf.into()
     }
 
     /// Extracts bits from the given position to the end as a new bitmap.
@@ -2241,26 +2411,18 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(2, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
+    /// bitmap.insert(2);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
     ///
-    /// let sub = bitmap.get_from(2);
+    /// let sub = bitmap.skip(2);
     /// assert!(sub.get(0)); // bit 2 -> 0
     /// assert!(sub.get(1)); // bit 3 -> 1
     /// assert!(sub.get(3)); // bit 5 -> 3
     /// ```
     #[must_use]
-    pub fn get_from(&self, start: usize) -> Self {
-        let mut result = Self::new();
-
-        for bit in self.iter() {
-            if bit >= start {
-                result.set(bit - start, true);
-            }
-        }
-
-        result
+    pub fn skip(&self, beg: usize) -> Self {
+        self.shr(beg)
     }
 
     /// Extracts bits from the beginning up to (but not including) the given
@@ -2272,43 +2434,78 @@ impl SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
-    /// bitmap.set(5, true);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
+    /// bitmap.insert(5);
     ///
-    /// let sub = bitmap.get_to(4);
+    /// let sub = bitmap.take(4);
     /// assert!(sub.get(1));
     /// assert!(sub.get(3));
     /// assert!(!sub.get(5)); // Not included
     /// ```
     #[must_use]
-    pub fn get_to(&self, end: usize) -> Self {
-        let slice = self.as_slice();
-        let (end_wi, end_bi) = bitpos(end);
-
-        // Calculate how many words we need
-        let words_needed = if end_bi == 0 { end_wi } else { end_wi + 1 };
-        let copy_words = words_needed.min(slice.len());
-
-        let mut builder = SmolBitmapBuilder::with_capacity(copy_words);
-
-        if end_wi >= slice.len() {
-            // Copy all words since end is beyond our data
-            builder.extend_from_slice(slice);
-        } else if end_bi == 0 {
-            // End aligns with word boundary - copy whole words
-            builder.extend_from_slice(&slice[..end_wi]);
-        } else {
-            // Copy whole words first
-            builder.extend_from_slice(&slice[..end_wi]);
-
-            // Mask and copy the final partial word if it exists
-            if end_wi < slice.len() {
-                let mask = (1u64 << end_bi) - 1;
-                builder.push(slice[end_wi] & mask);
-            }
+    pub fn take(&self, end: usize) -> Self {
+        let end = end.min(self.capacity());
+        if end == 0 {
+            return Self::new();
         }
 
-        builder.finalize()
+        let (last_word_idx, last_bit_idx) = bitpos!(end - 1);
+
+        // Clear all words beyond the last needed word
+        let words_needed = last_word_idx + 1;
+        let source = self.as_slice();
+        let mut rb = SmolBitmapBuilder::from_slice(&source[..words_needed]);
+
+        // Clear the high bits in the last word if needed
+        if last_word_idx < rb.len() && last_bit_idx < 63 {
+            let mask = (1u64 << (last_bit_idx + 1)) - 1;
+            rb[last_word_idx] &= mask;
+        }
+
+        // Try to shrink back to inline storage if possible
+        rb.into()
+    }
+}
+
+/// A trait to convert types to a boolean value.
+///
+/// This trait is used to allow the [`replace_generic`] method to be
+/// monomorphized with a constant parameter, enabling compile-time
+/// optimizations while still supporting runtime flexibility. It is
+/// particularly useful for implementing methods like `insert` and
+/// `remove` in the [`SmolBitmap`] struct, where the boolean value
+/// can be determined at compile time for efficiency.
+trait ToBool: Copy {
+    /// Converts the implementing type to a boolean value.
+    fn to_bool(self) -> bool;
+}
+
+/// A marker type representing the boolean value `true`.
+#[derive(Copy, Clone)]
+struct True;
+
+/// A marker type representing the boolean value `false`.
+#[derive(Copy, Clone)]
+struct False;
+
+impl ToBool for True {
+    #[inline(always)]
+    fn to_bool(self) -> bool {
+        true
+    }
+}
+
+impl ToBool for False {
+    #[inline(always)]
+    fn to_bool(self) -> bool {
+        false
+    }
+}
+
+impl ToBool for bool {
+    #[inline(always)]
+    fn to_bool(self) -> bool {
+        self
     }
 }

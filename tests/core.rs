@@ -17,8 +17,8 @@ fn test_basic_operations() {
     assert!(bitmap.is_empty());
 
     // Set some bits
-    bitmap.set(10, true);
-    bitmap.set(42, true);
+    bitmap.insert(10);
+    bitmap.insert(42);
 
     // Check the bits
     assert!(bitmap.get(10));
@@ -37,7 +37,7 @@ fn test_spilled_storage() {
     assert!(!bitmap.is_spilled());
 
     // Set a bit beyond inline capacity
-    bitmap.set(200, true);
+    bitmap.insert(200);
     assert!(bitmap.is_spilled());
     assert!(bitmap.get(200));
 }
@@ -45,9 +45,9 @@ fn test_spilled_storage() {
 #[test]
 fn test_iterators() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(5, true);
-    bitmap.set(10, true);
+    bitmap.insert(1);
+    bitmap.insert(5);
+    bitmap.insert(10);
 
     let bits: Vec<usize> = bitmap.iter().collect();
     assert_eq!(bits, vec![1, 5, 10]);
@@ -60,8 +60,8 @@ fn test_iterators() {
 #[test]
 fn test_into_iterator() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(2, true);
-    bitmap.set(7, true);
+    bitmap.insert(2);
+    bitmap.insert(7);
 
     let bits: Vec<usize> = bitmap.into_iter().collect();
     assert_eq!(bits, vec![2, 7]);
@@ -82,7 +82,7 @@ fn test_from_iterator() {
 #[test]
 fn test_extend() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
+    bitmap.insert(1);
 
     bitmap.extend(vec![3, 5, 7]);
 
@@ -97,10 +97,10 @@ fn test_union() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(1, true);
-    a.set(3, true);
-    b.set(2, true);
-    b.set(3, true);
+    a.insert(1);
+    a.insert(3);
+    b.insert(2);
+    b.insert(3);
 
     let union = a.union(&b);
     assert!(union.get(1));
@@ -118,10 +118,10 @@ fn test_intersection() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(1, true);
-    a.set(3, true);
-    b.set(2, true);
-    b.set(3, true);
+    a.insert(1);
+    a.insert(3);
+    b.insert(2);
+    b.insert(3);
 
     let intersection = a.intersection(&b);
     assert!(!intersection.get(1));
@@ -134,10 +134,10 @@ fn test_difference() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(1, true);
-    a.set(3, true);
-    b.set(2, true);
-    b.set(3, true);
+    a.insert(1);
+    a.insert(3);
+    b.insert(2);
+    b.insert(3);
 
     let difference = a.difference(&b);
     assert!(difference.get(1));
@@ -150,10 +150,10 @@ fn test_symmetric_difference() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(1, true);
-    a.set(3, true);
-    b.set(2, true);
-    b.set(3, true);
+    a.insert(1);
+    a.insert(3);
+    b.insert(2);
+    b.insert(3);
 
     let sym_diff = a.symmetric_difference(&b);
     assert!(sym_diff.get(1));
@@ -166,9 +166,9 @@ fn test_subset_superset() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(1, true);
-    a.set(3, true);
-    b.set(1, true);
+    a.insert(1);
+    a.insert(3);
+    b.insert(1);
 
     assert!(b.is_subset(&a));
     assert!(a.is_superset(&b));
@@ -181,20 +181,20 @@ fn test_disjoint() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(1, true);
-    b.set(2, true);
+    a.insert(1);
+    b.insert(2);
     assert!(a.is_disjoint(&b));
 
-    b.set(1, true);
+    b.insert(1);
     assert!(!a.is_disjoint(&b));
 }
 
 #[test]
 fn test_select() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(2, true);
-    bitmap.set(4, true);
+    bitmap.insert(0);
+    bitmap.insert(2);
+    bitmap.insert(4);
 
     let items = ["a", "b", "c", "d", "e"];
     let selected: Vec<_> = bitmap.select(items.iter().copied()).collect();
@@ -207,70 +207,70 @@ fn test_first_last() {
     assert_eq!(bitmap.first(), None);
     assert_eq!(bitmap.last(), None);
 
-    bitmap.set(10, true);
-    bitmap.set(5, true);
-    bitmap.set(20, true);
+    bitmap.insert(10);
+    bitmap.insert(5);
+    bitmap.insert(20);
 
     assert_eq!(bitmap.first(), Some(5));
     assert_eq!(bitmap.last(), Some(20));
 }
 
 #[test]
-fn test_position_of() {
+fn test_rank() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(5, true);
-    bitmap.set(10, true);
-    bitmap.set(15, true);
-    bitmap.set(20, true);
+    bitmap.insert(5);
+    bitmap.insert(10);
+    bitmap.insert(15);
+    bitmap.insert(20);
 
-    assert_eq!(bitmap.position_of(0), 0);
-    assert_eq!(bitmap.position_of(6), 1);
-    assert_eq!(bitmap.position_of(12), 2);
-    assert_eq!(bitmap.position_of(25), 4);
+    assert_eq!(bitmap.rank(0), 0);
+    assert_eq!(bitmap.rank(6), 1);
+    assert_eq!(bitmap.rank(12), 2);
+    assert_eq!(bitmap.rank(25), 4);
 }
 
 #[test]
 fn test_count_ones_zeros() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(5, true);
-    bitmap.set(10, true);
+    bitmap.insert(5);
+    bitmap.insert(10);
 
     assert_eq!(bitmap.count_ones(), 2);
     assert_eq!(bitmap.count_zeros(), bitmap.capacity() - 2);
 }
 
 #[test]
-fn test_complement() {
+fn test_complement_range() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(3, true);
+    bitmap.insert(1);
+    bitmap.insert(3);
 
-    let complement = bitmap.complement(4);
-    assert!(complement.get(0));
-    assert!(!complement.get(1));
-    assert!(complement.get(2));
-    assert!(!complement.get(3));
-    assert!(complement.get(4));
+    bitmap.complement_range(0, 5);
+    assert!(bitmap.get(0));
+    assert!(!bitmap.get(1));
+    assert!(bitmap.get(2));
+    assert!(!bitmap.get(3));
+    assert!(bitmap.get(4));
 }
 
 #[test]
-fn test_toggle() {
+fn test_complement() {
     let mut bitmap = SmolBitmap::new();
     assert!(!bitmap.get(5));
 
-    bitmap.toggle(5);
+    bitmap.complement(5);
     assert!(bitmap.get(5));
 
-    bitmap.toggle(5);
+    bitmap.complement(5);
     assert!(!bitmap.get(5));
 }
 
 #[test]
 fn test_next_prev_set_bit() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(5, true);
-    bitmap.set(10, true);
-    bitmap.set(15, true);
+    bitmap.insert(5);
+    bitmap.insert(10);
+    bitmap.insert(15);
 
     assert_eq!(bitmap.next_set_bit(0), Some(5));
     assert_eq!(bitmap.next_set_bit(6), Some(10));
@@ -284,10 +284,10 @@ fn test_next_prev_set_bit() {
 #[test]
 fn test_retain() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(2, true);
-    bitmap.set(5, true);
-    bitmap.set(8, true);
+    bitmap.insert(1);
+    bitmap.insert(2);
+    bitmap.insert(5);
+    bitmap.insert(8);
 
     bitmap.retain(|bit| bit.is_multiple_of(2));
 
@@ -302,10 +302,10 @@ fn test_remove_prefix() {
     let mut bitmap = SmolBitmap::new();
     // Create pattern: 1111001010000...
     for i in 0..4 {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
-    bitmap.set(6, true);
-    bitmap.set(8, true);
+    bitmap.insert(6);
+    bitmap.insert(8);
 
     let removed = bitmap.remove_prefix(true);
     assert_eq!(removed, 4);
@@ -322,10 +322,10 @@ fn test_remove_prefix() {
 #[test]
 fn test_shrink_to_fit() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(300, true);
+    bitmap.insert(300);
     assert!(bitmap.is_spilled());
 
-    bitmap.set(300, false);
+    bitmap.remove(300);
     bitmap.shrink_to_fit();
     // Should move back to inline storage since no bits are set
     assert!(!bitmap.is_spilled());
@@ -354,8 +354,8 @@ fn test_reserve() {
 #[test]
 fn test_clear() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(10, true);
-    bitmap.set(200, true);
+    bitmap.insert(10);
+    bitmap.insert(200);
 
     assert!(bitmap.is_spilled());
     assert!(!bitmap.is_empty());
@@ -372,9 +372,9 @@ mod serde_tests {
     #[test]
     fn test_serde_json() {
         let mut bitmap = SmolBitmap::new();
-        bitmap.set(1, true);
-        bitmap.set(10, true);
-        bitmap.set(100, true);
+        bitmap.insert(1);
+        bitmap.insert(10);
+        bitmap.insert(100);
 
         let json = serde_json::to_string(&bitmap).unwrap();
         let deserialized: SmolBitmap = serde_json::from_str(&json).unwrap();
@@ -389,19 +389,19 @@ mod serde_tests {
 #[test]
 fn test_debug_format() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(5, true);
+    bitmap.insert(1);
+    bitmap.insert(5);
 
     let debug_str = format!("{bitmap:?}");
-    assert!(debug_str.contains("1"));
-    assert!(debug_str.contains("5"));
+    assert!(debug_str.contains('1'));
+    assert!(debug_str.contains('5'));
 }
 
 #[test]
 fn test_binary_format() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(2, true);
+    bitmap.insert(0);
+    bitmap.insert(2);
 
     let binary_str = format!("{bitmap:b}");
     assert!(binary_str.contains("101")); // bits 2, 1, 0 => 101
@@ -435,7 +435,7 @@ fn test_find_first_zero_all_set() {
     let mut bitmap = SmolBitmap::new();
     // Set all bits up to inline capacity
     for i in 0..SmolBitmap::inline_capacity() {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
     assert_eq!(bitmap.find_first_zero(), None); // All bits set, should return None
 }

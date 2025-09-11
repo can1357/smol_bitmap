@@ -5,7 +5,7 @@ use core::{
     iter::{FromIterator, FusedIterator},
 };
 
-use crate::{SmolBitmap, storage::bitpos};
+use crate::{SmolBitmap, macros::bitpos};
 
 /// An iterator over the indices of set bits in a [`SmolBitmap`].
 ///
@@ -32,8 +32,8 @@ pub type IntoIter = BitIter<SmolBitmap>;
 /// ```
 /// use smol_bitmap::SmolBitmap;
 /// let mut bitmap = SmolBitmap::new();
-/// bitmap.set(1, true);
-/// bitmap.set(3, true);
+/// bitmap.insert(1);
+/// bitmap.insert(3);
 ///
 /// let numbers = vec![10, 20, 30, 40, 50];
 /// let selected: Vec<_> = bitmap.select(numbers).collect();
@@ -60,8 +60,8 @@ impl<'a, I: Iterator> SelectIter<'a, I> {
     /// ```
     /// use smol_bitmap::{SelectIter, SmolBitmap};
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(2, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(2);
     ///
     /// let items = vec![1, 2, 3, 4, 5];
     /// let selected: Vec<_> = SelectIter::new(&bitmap, items).collect();
@@ -76,7 +76,7 @@ impl<'a, I: Iterator> SelectIter<'a, I> {
     }
 
     fn next_pos(&mut self) -> Option<usize> {
-        let (mut wi, mut bi) = bitpos(self.next);
+        let (mut wi, mut bi) = bitpos!(self.next);
         while let Some(word) = self.words.get(wi) {
             let word = *word >> bi;
             if word == 0 {
@@ -93,7 +93,7 @@ impl<'a, I: Iterator> SelectIter<'a, I> {
     }
 
     fn popcnt_rem(&self) -> usize {
-        let (wi, bi) = bitpos(self.next);
+        let (wi, bi) = bitpos!(self.next);
         self.words
             .iter()
             .skip(wi)
@@ -109,7 +109,7 @@ impl<'a, I: Iterator> SelectIter<'a, I> {
     }
 }
 
-impl<'a, I: Iterator> Iterator for SelectIter<'a, I> {
+impl<I: Iterator> Iterator for SelectIter<'_, I> {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -131,13 +131,13 @@ impl<'a, I: Iterator> Iterator for SelectIter<'a, I> {
     }
 }
 
-impl<'a, I: ExactSizeIterator> ExactSizeIterator for SelectIter<'a, I> {
+impl<I: ExactSizeIterator> ExactSizeIterator for SelectIter<'_, I> {
     fn len(&self) -> usize {
         self.popcnt_rem().min(self.it.len())
     }
 }
 
-impl<'a, I: FusedIterator> FusedIterator for SelectIter<'a, I> {}
+impl<I: FusedIterator> FusedIterator for SelectIter<'_, I> {}
 
 /// An iterator over the indices of set bits in a bitmap.
 ///
@@ -153,9 +153,9 @@ impl<'a, I: FusedIterator> FusedIterator for SelectIter<'a, I> {}
 /// ```
 /// use smol_bitmap::SmolBitmap;
 /// let mut bitmap = SmolBitmap::new();
-/// bitmap.set(5, true);
-/// bitmap.set(10, true);
-/// bitmap.set(15, true);
+/// bitmap.insert(5);
+/// bitmap.insert(10);
+/// bitmap.insert(15);
 ///
 /// // Forward iteration
 /// let indices: Vec<_> = bitmap.iter().collect();
@@ -179,7 +179,7 @@ impl<S: Borrow<[u64]>> Iterator for BitIter<S> {
         let slice = self.words.borrow();
 
         while self.pos < self.rpos {
-            let (mut wi, bi) = bitpos(self.pos);
+            let (mut wi, bi) = bitpos!(self.pos);
             if wi >= slice.len() {
                 return None;
             }
@@ -226,8 +226,8 @@ impl<S: Borrow<[u64]>> ExactSizeIterator for BitIter<S> {
         }
 
         let slice = self.words.borrow();
-        let (wmin, bmin) = bitpos(self.pos);
-        let (wmax, bmax) = bitpos(self.rpos);
+        let (wmin, bmin) = bitpos!(self.pos);
+        let (wmax, bmax) = bitpos!(self.rpos);
 
         let mut count = 0;
 
@@ -277,7 +277,7 @@ impl<S: Borrow<[u64]>> DoubleEndedIterator for BitIter<S> {
 
         while self.rpos > self.pos {
             self.rpos -= 1;
-            let (wi, bi) = bitpos(self.rpos);
+            let (wi, bi) = bitpos!(self.rpos);
 
             if wi >= slice.len() {
                 self.rpos = slice.len() * 64;
@@ -340,7 +340,7 @@ impl FromIterator<usize> for SmolBitmap {
     fn from_iter<I: IntoIterator<Item = usize>>(iter: I) -> Self {
         let mut bitmap = Self::new();
         for bit in iter {
-            bitmap.set(bit, true);
+            bitmap.insert(bit);
         }
         bitmap
     }
@@ -349,7 +349,7 @@ impl FromIterator<usize> for SmolBitmap {
 impl Extend<usize> for SmolBitmap {
     fn extend<I: IntoIterator<Item = usize>>(&mut self, iter: I) {
         for bit in iter {
-            self.set(bit, true);
+            self.insert(bit);
         }
     }
 }

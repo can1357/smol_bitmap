@@ -51,7 +51,7 @@ fn main() {
     println!("Finding adjacent set bits:");
     let mut bitmap = SmolBitmap::new();
     for i in [5, 10, 15, 25, 40, 60] {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
     println!("Bitmap: {:?}", bitmap.iter().collect::<Vec<_>>());
 
@@ -77,7 +77,7 @@ fn main() {
 
     // Add some bits then shrink
     for i in 0..50 {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
     bitmap.shrink_to_fit();
     println!(
@@ -89,9 +89,9 @@ fn main() {
     // Select iterator - selecting elements from another iterator
     println!("Select iterator:");
     let mut selector = SmolBitmap::new();
-    selector.set(0, true); // Select 1st element (index 0)
-    selector.set(2, true); // Select 3rd element (index 2)
-    selector.set(4, true); // Select 5th element (index 4)
+    selector.insert(0); // Select 1st element (index 0)
+    selector.insert(2); // Select 3rd element (index 2)
+    selector.insert(4); // Select 5th element (index 4)
 
     let data = vec!["a", "b", "c", "d", "e", "f"];
     let selected: Vec<_> = selector.select(data).collect();
@@ -119,7 +119,7 @@ fn main() {
     println!("Display formats:");
     let mut bitmap = SmolBitmap::new();
     for i in [0, 1, 4, 5] {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
     println!("Binary format: {bitmap}");
     println!("Debug format: {:?}", bitmap.iter().collect::<Vec<_>>());
@@ -128,11 +128,11 @@ fn main() {
     println!("\nPosition operations:");
     let mut bitmap = SmolBitmap::new();
     for i in [1, 3, 5, 7, 9] {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
 
     println!("Bitmap: {:?}", bitmap.iter().collect::<Vec<_>>());
-    println!("Position of bit 5 in set: {}", bitmap.position_of(5));
-    println!("Position of bit 7 in set: {}", bitmap.position_of(7));
+    println!("Position of bit 5 in set: {}", bitmap.rank(5));
+    println!("Position of bit 7 in set: {}", bitmap.rank(7));
     println!("Number of set bits: {}", bitmap.len());
 }
