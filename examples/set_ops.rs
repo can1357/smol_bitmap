@@ -11,12 +11,12 @@ fn main() {
 
     // Populate bitmap A: {1, 2, 3, 5, 8}
     for i in [1, 2, 3, 5, 8] {
-        a.set(i, true);
+        a.insert(i);
     }
 
     // Populate bitmap B: {2, 3, 5, 7, 11}
     for i in [2, 3, 5, 7, 11] {
-        b.set(i, true);
+        b.insert(i);
     }
 
     println!("Set A: {:?}", a.iter().collect::<Vec<_>>());
@@ -57,7 +57,7 @@ fn main() {
 
     let mut subset = SmolBitmap::new();
     for i in [2, 3] {
-        subset.set(i, true);
+        subset.insert(i);
     }
 
     println!("Subset: {:?}", subset.iter().collect::<Vec<_>>());
@@ -67,7 +67,7 @@ fn main() {
 
     let mut disjoint = SmolBitmap::new();
     for i in [20, 30, 40] {
-        disjoint.set(i, true);
+        disjoint.insert(i);
     }
     println!("\nDisjoint set: {:?}", disjoint.iter().collect::<Vec<_>>());
     println!(
@@ -102,16 +102,16 @@ fn main() {
     println!("\n=== Complement Operation ===\n");
 
     let mut bits = SmolBitmap::new();
-    bits.set(1, true);
-    bits.set(3, true);
-    bits.set(5, true);
+    bits.insert(1);
+    bits.insert(3);
+    bits.insert(5);
 
     println!("Original: {:?}", bits.iter().collect::<Vec<_>>());
 
-    let complement = bits.complement(7);
+    bits.complement_range(0, 8);
     println!(
         "Complement up to bit 7: {:?}",
-        complement.iter().collect::<Vec<_>>()
+        bits.iter().collect::<Vec<_>>()
     );
     println!("Expected: [0, 2, 4, 6, 7]");
 }

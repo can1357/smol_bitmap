@@ -1,6 +1,6 @@
 [package]
 name = "smol_bitmap"
-version = "0.1.6"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Can Boluk <me@can.ac>"]
@@ -34,9 +34,9 @@ criterion = "0.7"
 proptest = "1.5"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
-rand = "0.8"
 serde_json = "1.0"
 bitvec = "1.0"
+num-bigint = "0.4"
 
 [[bench]]
 name = "basic_bench"

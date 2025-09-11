@@ -18,7 +18,7 @@ fn bench_set_operations(c: &mut Criterion) {
     // Benchmark setting bits in spilled storage
     group.bench_function("set_spilled", |b| {
         let mut bitmap = SmolBitmap::new();
-        bitmap.set(200, true); // Force spill
+        bitmap.insert(200); // Force spill
         let mut i = 0;
         b.iter(|| {
             bitmap.set(i % 500, black_box(true));
@@ -30,7 +30,7 @@ fn bench_set_operations(c: &mut Criterion) {
     group.bench_function("get_inline", |b| {
         let mut bitmap = SmolBitmap::new();
         for i in 0..100 {
-            bitmap.set(i, true);
+            bitmap.insert(i);
         }
         let mut i = 0;
         b.iter(|| {
@@ -44,7 +44,7 @@ fn bench_set_operations(c: &mut Criterion) {
         let mut bitmap = SmolBitmap::new();
         for i in 0usize..500 {
             if i.is_multiple_of(2) {
-                bitmap.set(i, true);
+                bitmap.insert(i);
             }
         }
         let mut i = 0;
@@ -60,15 +60,15 @@ fn bench_set_operations(c: &mut Criterion) {
 fn bench_iteration(c: &mut Criterion) {
     let mut group = c.benchmark_group("iteration");
 
-    for size in [10, 50, 100, 500, 1000].iter() {
+    for size in &[10, 50, 100, 500, 1000] {
         let mut bitmap = SmolBitmap::new();
         for i in (0..*size).step_by(2) {
-            bitmap.set(i, true);
+            bitmap.insert(i);
         }
 
         group.bench_with_input(BenchmarkId::new("forward", size), &bitmap, |b, bitmap| {
             b.iter(|| {
-                for bit in bitmap.iter() {
+                for bit in bitmap {
                     black_box(bit);
                 }
             });
@@ -89,15 +89,15 @@ fn bench_iteration(c: &mut Criterion) {
 fn bench_set_operations_bulk(c: &mut Criterion) {
     let mut group = c.benchmark_group("bulk_operations");
 
-    for size in [10, 50, 100, 500].iter() {
+    for size in &[10, 50, 100, 500] {
         let mut a = SmolBitmap::new();
         let mut b = SmolBitmap::new();
 
         for i in (0..*size).step_by(2) {
-            a.set(i, true);
+            a.insert(i);
         }
         for i in (0..*size).step_by(3) {
-            b.set(i, true);
+            b.insert(i);
         }
 
         group.bench_with_input(
@@ -147,7 +147,7 @@ fn bench_set_operations_bulk(c: &mut Criterion) {
 fn bench_from_iter(c: &mut Criterion) {
     let mut group = c.benchmark_group("from_iter");
 
-    for size in [10, 50, 100, 500, 1000].iter() {
+    for size in &[10, 50, 100, 500, 1000] {
         let indices: Vec<usize> = (0..*size).step_by(2).collect();
 
         group.bench_with_input(
@@ -182,10 +182,10 @@ fn bench_inline_vs_spilled_transition(c: &mut Criterion) {
             let mut bitmap = SmolBitmap::new();
             // Fill up inline storage
             for i in 0..127 {
-                bitmap.set(i, true);
+                bitmap.insert(i);
             }
             // This should trigger spill
-            bitmap.set(127, true);
+            bitmap.insert(127);
             black_box(bitmap);
         });
     });
@@ -195,12 +195,12 @@ fn bench_inline_vs_spilled_transition(c: &mut Criterion) {
         b.iter(|| {
             let mut bitmap = SmolBitmap::new();
             // Force spill
-            bitmap.set(500, true);
+            bitmap.insert(500);
             // Clear high bits
-            bitmap.set(500, false);
+            bitmap.remove(500);
             // Set some low bits
             for i in 0..50 {
-                bitmap.set(i, true);
+                bitmap.insert(i);
             }
             // Try to shrink back
             bitmap.shrink_to_fit();
@@ -217,7 +217,7 @@ fn bench_clone(c: &mut Criterion) {
     // Clone inline bitmap
     let mut inline_bitmap = SmolBitmap::new();
     for i in 0..100 {
-        inline_bitmap.set(i, true);
+        inline_bitmap.insert(i);
     }
 
     group.bench_function("clone_inline", |b| {
@@ -230,7 +230,7 @@ fn bench_clone(c: &mut Criterion) {
     let mut spilled_bitmap = SmolBitmap::new();
     for i in 0usize..500 {
         if i.is_multiple_of(2) {
-            spilled_bitmap.set(i, true);
+            spilled_bitmap.insert(i);
         }
     }
 

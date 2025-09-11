@@ -12,10 +12,10 @@ fn main() {
     println!("Is using heap storage? {}\n", bitmap.is_spilled());
 
     // Set some bits
-    bitmap.set(5, true);
-    bitmap.set(10, true);
-    bitmap.set(15, true);
-    bitmap.set(100, true);
+    bitmap.insert(5);
+    bitmap.insert(10);
+    bitmap.insert(15);
+    bitmap.insert(100);
 
     println!("Set bits at positions: 5, 10, 15, 100");
     println!("Number of set bits: {}", bitmap.count_ones());
@@ -41,14 +41,14 @@ fn main() {
 
     // Force heap allocation by setting a high bit
     println!("Setting bit at position 200 (forces heap allocation)");
-    bitmap.set(200, true);
+    bitmap.insert(200);
     println!("Is using heap storage? {}", bitmap.is_spilled());
     println!("New capacity: {} bits\n", bitmap.capacity());
 
-    // Toggle some bits
-    println!("Toggling bits at positions 5 and 25");
-    bitmap.toggle(5); // Was set, now unset
-    bitmap.toggle(25); // Was unset, now set
+    // Complement some bits
+    println!("Complementing bits at positions 5 and 25");
+    bitmap.complement(5); // Was set, now unset
+    bitmap.complement(25); // Was unset, now set
 
     println!("Updated set bits:");
     print!("  ");

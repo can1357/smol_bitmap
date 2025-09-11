@@ -24,9 +24,9 @@
 //! let mut bitmap = SmolBitmap::new();
 //!
 //! // Set some bits
-//! bitmap.set(10, true);
-//! bitmap.set(42, true);
-//! bitmap.set(127, true); // Still inline!
+//! bitmap.insert(10);
+//! bitmap.insert(42);
+//! bitmap.insert(127); // Still inline!
 //!
 //! // Check if bits are set
 //! assert!(bitmap.get(10));
@@ -39,8 +39,8 @@
 //!
 //! // Set operations
 //! let mut other = SmolBitmap::new();
-//! other.set(10, true);
-//! other.set(50, true);
+//! other.insert(10);
+//! other.insert(50);
 //!
 //! let union = bitmap.union(&other);
 //! let intersection = bitmap.intersection(&other);
@@ -73,14 +73,13 @@
 extern crate alloc;
 
 // Module declarations
-pub mod bitmap;
-pub mod iter;
+mod bitmap;
+mod iter;
+mod macros;
+mod ser;
 mod set_ops;
 pub mod storage;
 pub mod traits;
-
-#[cfg(feature = "serde")]
-pub mod ser;
 
 // Re-exports
 pub use bitmap::SmolBitmap;

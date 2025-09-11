@@ -1,6 +1,9 @@
 //! Trait implementations for `SmolBitmap`.
 
-use crate::{SmolBitmap, storage::SmolBitmapBuilder};
+use crate::{
+    SmolBitmap,
+    storage::{BitArray, SmolBitmapBuilder},
+};
 use alloc::vec::Vec;
 use core::{
     borrow::Borrow,
@@ -19,7 +22,7 @@ pub enum ParseBitmapError {
     /// Invalid character found in the binary string.
     InvalidChar {
         /// The invalid character found
-        char: char,
+        ch: char,
         /// The position of the invalid character
         pos: usize,
     },
@@ -31,7 +34,7 @@ pub enum ParseBitmapError {
 impl fmt::Display for ParseBitmapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidChar { char, pos } => {
+            Self::InvalidChar { ch: char, pos } => {
                 write!(
                     f,
                     "invalid character '{char}' at position {pos} in binary string"
@@ -45,7 +48,7 @@ impl fmt::Display for ParseBitmapError {
 #[cfg(feature = "std")]
 impl std::error::Error for ParseBitmapError {}
 
-/// Error type for converting SmolBitmap to primitive integers.
+/// Error type for converting `SmolBitmap` to primitive integers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TryFromBitmapError {
     /// The bitmap has too many bits to fit in the target type.
@@ -84,7 +87,7 @@ impl Default for SmolBitmap {
 
 impl Clone for SmolBitmap {
     fn clone(&self) -> Self {
-        Self::from(self.as_ref())
+        Self::from(self.as_slice_rtrim())
     }
 }
 
@@ -97,7 +100,7 @@ impl From<SmolBitmap> for Vec<u64> {
 impl From<Vec<u64>> for SmolBitmap {
     fn from(words: Vec<u64>) -> Self {
         Self {
-            array: crate::storage::BitArray::from(words).pack(),
+            array: BitArray::from(words).pack(),
         }
     }
 }
@@ -105,7 +108,15 @@ impl From<Vec<u64>> for SmolBitmap {
 impl From<&[u64]> for SmolBitmap {
     fn from(slice: &[u64]) -> Self {
         Self {
-            array: crate::storage::BitArray::from(slice).pack(),
+            array: BitArray::from(slice).pack(),
+        }
+    }
+}
+
+impl<const N: usize> From<&[u64; N]> for SmolBitmap {
+    fn from(slice: &[u64; N]) -> Self {
+        Self {
+            array: BitArray::from(slice).pack(),
         }
     }
 }
@@ -140,9 +151,9 @@ impl fmt::Binary for SmolBitmap {
     /// ```
     /// use smol_bitmap::SmolBitmap;
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(0, true);
-    /// bitmap.set(2, true);
-    /// bitmap.set(65, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(2);
+    /// bitmap.insert(65);
     ///
     /// // Shows compact binary representation
     /// println!("{:#b}", bitmap); // 0b10000000000000000000000000000000000000000000000000000000000000000101
@@ -209,10 +220,7 @@ impl FromStr for SmolBitmap {
                 b'0' => 0,
                 b'_' => continue,
                 _ => {
-                    return Err(ParseBitmapError::InvalidChar {
-                        char: v as char,
-                        pos,
-                    });
+                    return Err(ParseBitmapError::InvalidChar { ch: v as char, pos });
                 }
             };
             tvalue |= bit << twidth;
@@ -225,14 +233,14 @@ impl FromStr for SmolBitmap {
         if twidth != 0 && tvalue != 0 {
             bm.push(tvalue);
         }
-        Ok(bm.finalize())
+        Ok(bm.into())
     }
 }
 
 impl fmt::Debug for SmolBitmap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut w = f.debug_set();
-        for bit in self.iter() {
+        for bit in self {
             w.entry(&bit);
         }
         w.finish()
@@ -241,13 +249,7 @@ impl fmt::Debug for SmolBitmap {
 
 impl PartialEq for SmolBitmap {
     fn eq(&self, other: &Self) -> bool {
-        let mut lhs = self.as_slice();
-        let mut rhs = other.as_slice();
-        if lhs.len() < rhs.len() {
-            mem::swap(&mut lhs, &mut rhs);
-        }
-        let (lhs, rem) = lhs.split_at(rhs.len());
-        lhs == rhs && rem.iter().all(|&w| w == 0)
+        self.eq_rtrim(other.as_slice())
     }
 }
 
@@ -261,22 +263,7 @@ impl PartialOrd for SmolBitmap {
 
 impl Ord for SmolBitmap {
     fn cmp(&self, other: &Self) -> Ordering {
-        let mut lhs = self.as_slice();
-        let mut rhs = other.as_slice();
-        let mut rev = false;
-        if lhs.len() < rhs.len() {
-            mem::swap(&mut lhs, &mut rhs);
-            rev = true;
-        }
-        let (lhs, rem) = lhs.split_at(rhs.len());
-        let cmp = lhs.cmp(rhs).then_with(|| {
-            if rem.iter().all(|&w| w == 0) {
-                Ordering::Equal
-            } else {
-                Ordering::Greater
-            }
-        });
-        if rev { cmp.reverse() } else { cmp }
+        self.cmp_rtrim(other.as_slice())
     }
 }
 
@@ -313,12 +300,12 @@ impl BitAnd for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
-    /// a.set(1, true);
+    /// a.insert(0);
+    /// a.insert(1);
     ///
     /// let mut b = SmolBitmap::new();
-    /// b.set(1, true);
-    /// b.set(2, true);
+    /// b.insert(1);
+    /// b.insert(2);
     ///
     /// let c = a & b;
     /// assert!(c.get(1)); // Only bit 1 is set in both
@@ -349,12 +336,12 @@ impl BitAndAssign for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
-    /// a.set(1, true);
+    /// a.insert(0);
+    /// a.insert(1);
     ///
     /// let mut b = SmolBitmap::new();
-    /// b.set(1, true);
-    /// b.set(2, true);
+    /// b.insert(1);
+    /// b.insert(2);
     ///
     /// a &= b;
     /// assert!(a.get(1)); // Only bit 1 is set in both
@@ -366,9 +353,9 @@ impl BitAndAssign for SmolBitmap {
     }
 }
 
-impl BitAndAssign<&SmolBitmap> for SmolBitmap {
+impl BitAndAssign<&Self> for SmolBitmap {
     #[inline]
-    fn bitand_assign(&mut self, rhs: &SmolBitmap) {
+    fn bitand_assign(&mut self, rhs: &Self) {
         self.intersection_with(rhs);
     }
 }
@@ -384,12 +371,12 @@ impl BitOr for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
-    /// a.set(1, true);
+    /// a.insert(0);
+    /// a.insert(1);
     ///
     /// let mut b = SmolBitmap::new();
-    /// b.set(1, true);
-    /// b.set(2, true);
+    /// b.insert(1);
+    /// b.insert(2);
     ///
     /// let c = a | b;
     /// assert!(c.get(0));
@@ -420,10 +407,10 @@ impl BitOrAssign for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
+    /// a.insert(0);
     ///
     /// let mut b = SmolBitmap::new();
-    /// b.set(1, true);
+    /// b.insert(1);
     ///
     /// a |= b;
     /// assert!(a.get(0));
@@ -435,9 +422,9 @@ impl BitOrAssign for SmolBitmap {
     }
 }
 
-impl BitOrAssign<&SmolBitmap> for SmolBitmap {
+impl BitOrAssign<&Self> for SmolBitmap {
     #[inline]
-    fn bitor_assign(&mut self, rhs: &SmolBitmap) {
+    fn bitor_assign(&mut self, rhs: &Self) {
         self.union_with(rhs);
     }
 }
@@ -453,12 +440,12 @@ impl BitXor for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
-    /// a.set(1, true);
+    /// a.insert(0);
+    /// a.insert(1);
     ///
     /// let mut b = SmolBitmap::new();
-    /// b.set(1, true);
-    /// b.set(2, true);
+    /// b.insert(1);
+    /// b.insert(2);
     ///
     /// let c = a ^ b;
     /// assert!(c.get(0)); // Only in a
@@ -489,12 +476,12 @@ impl BitXorAssign for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
-    /// a.set(1, true);
+    /// a.insert(0);
+    /// a.insert(1);
     ///
     /// let mut b = SmolBitmap::new();
-    /// b.set(1, true);
-    /// b.set(2, true);
+    /// b.insert(1);
+    /// b.insert(2);
     ///
     /// a ^= b;
     /// assert!(a.get(0)); // Only in original a
@@ -507,9 +494,9 @@ impl BitXorAssign for SmolBitmap {
     }
 }
 
-impl BitXorAssign<&SmolBitmap> for SmolBitmap {
+impl BitXorAssign<&Self> for SmolBitmap {
     #[inline]
-    fn bitxor_assign(&mut self, rhs: &SmolBitmap) {
+    fn bitxor_assign(&mut self, rhs: &Self) {
         self.symmetric_difference_with(rhs);
     }
 }
@@ -525,8 +512,8 @@ impl Not for SmolBitmap {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut a = SmolBitmap::new();
-    /// a.set(0, true);
-    /// a.set(2, true);
+    /// a.insert(0);
+    /// a.insert(2);
     ///
     /// let b = !a.clone();
     /// assert!(!b.get(0));
@@ -534,14 +521,9 @@ impl Not for SmolBitmap {
     /// assert!(!b.get(2));
     /// ```
     #[inline]
-    fn not(self) -> Self::Output {
-        // Use the maximum set bit as the limit for complement
-        if let Some(max_bit) = self.last() {
-            self.complement(max_bit)
-        } else {
-            // Empty bitmap, return empty
-            Self::new()
-        }
+    fn not(mut self) -> Self::Output {
+        self.complement_range(0, self.last().map_or(0, |max_bit| max_bit + 1));
+        self
     }
 }
 
@@ -550,11 +532,7 @@ impl Not for &SmolBitmap {
 
     #[inline]
     fn not(self) -> Self::Output {
-        if let Some(max_bit) = self.last() {
-            self.complement(max_bit)
-        } else {
-            SmolBitmap::new()
-        }
+        self.clone().not()
     }
 }
 
@@ -577,7 +555,7 @@ impl From<u8> for SmolBitmap {
     /// assert!(bitmap.get(3));
     /// ```
     fn from(value: u8) -> Self {
-        Self::from(value as u64)
+        Self::from(u64::from(value))
     }
 }
 
@@ -593,7 +571,7 @@ impl From<u16> for SmolBitmap {
     /// // Bits are set according to the binary representation
     /// ```
     fn from(value: u16) -> Self {
-        Self::from(value as u64)
+        Self::from(u64::from(value))
     }
 }
 
@@ -609,7 +587,7 @@ impl From<u32> for SmolBitmap {
     /// // Bits are set according to the binary representation
     /// ```
     fn from(value: u32) -> Self {
-        Self::from(value as u64)
+        Self::from(u64::from(value))
     }
 }
 
@@ -682,8 +660,8 @@ impl TryFrom<&SmolBitmap> for u8 {
     /// use smol_bitmap::SmolBitmap;
     ///
     /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.set(1, true);
-    /// bitmap.set(3, true);
+    /// bitmap.insert(1);
+    /// bitmap.insert(3);
     ///
     /// let value = u8::try_from(&bitmap).unwrap();
     /// assert_eq!(value, 0b00001010);
@@ -698,7 +676,7 @@ impl TryFrom<&SmolBitmap> for u8 {
             });
         }
 
-        Ok(bitmap.get_range(0, 8) as u8)
+        Ok(bitmap.get_range(0, 8) as Self)
     }
 }
 
@@ -720,7 +698,7 @@ impl TryFrom<&SmolBitmap> for u16 {
             });
         }
 
-        Ok(bitmap.get_range(0, 16) as u16)
+        Ok(bitmap.get_range(0, 16) as Self)
     }
 }
 
@@ -742,7 +720,7 @@ impl TryFrom<&SmolBitmap> for u32 {
             });
         }
 
-        Ok(bitmap.get_range(0, 32) as u32)
+        Ok(bitmap.get_range(0, 32) as Self)
     }
 }
 
@@ -786,8 +764,8 @@ impl TryFrom<&SmolBitmap> for u128 {
             });
         }
 
-        let low = bitmap.get_range(0, 64) as u128;
-        let high = bitmap.get_range(64, 128) as u128;
+        let low = Self::from(bitmap.get_range(0, 64));
+        let high = Self::from(bitmap.get_range(64, 128));
         Ok(low | (high << 64))
     }
 }
@@ -921,7 +899,7 @@ impl fmt::Octal for SmolBitmap {
 
         // Convert to octal - this is a bit more complex as octal doesn't align with
         // 64-bit words For simplicity, convert to bytes first
-        let bytes = self.to_bytes_le();
+        let bytes = self.to_le_bytes();
         if bytes.is_empty() {
             return f.write_str("0");
         }
@@ -931,8 +909,8 @@ impl fmt::Octal for SmolBitmap {
         let mut accumulator = 0u32;
         let mut bits = 0;
 
-        for byte in bytes {
-            accumulator |= (byte as u32) << bits;
+        for &byte in bytes.as_ref() {
+            accumulator |= u32::from(byte) << bits;
             bits += 8;
 
             while bits >= 3 {

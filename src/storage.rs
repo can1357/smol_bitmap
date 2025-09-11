@@ -3,42 +3,33 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{
     borrow::Borrow,
-    mem,
+    iter,
+    mem::{self, MaybeUninit},
     ops::{Deref, DerefMut, Index, IndexMut},
     ptr, slice,
 };
+
+use crate::{SmolBitmap, macros::msb};
 
 /// Number of 64-bit words that can be stored inline
 pub(crate) const WORDS_INLINE: usize = 2;
 pub(crate) const WORDS_MINEXT: usize = 4;
 pub(crate) const BITS_INLINE: usize = 64 * WORDS_INLINE - 1;
 
-/// Convert bit index to (word index, bit position within word)
-#[inline(always)]
-pub(crate) const fn bitpos(idx: usize) -> (usize, usize) {
-    (idx >> 6, idx & 63)
-}
-
-/// Checks if a word has its most significant bit set.
-#[inline(always)]
-pub(crate) const fn msb(val: u64) -> bool {
-    val.cast_signed() < 0
-}
-
 pub(crate) type ArrayBitmap = [u64; WORDS_INLINE];
 
 /// Attempts to pack words into inline storage.
 /// Returns Some(array) if the words can fit inline, None otherwise.
 /// Words can fit inline if:
-/// 1. There are at most INLINE_QWORDS non-zero words
+/// 1. There are at most `INLINE_QWORDS` non-zero words
 /// 2. The last word has its MSB clear (to distinguish from external storage)
-/// 3. The actual bits used don't exceed INLINE_CAPACITY
+/// 3. The actual bits used don't exceed `INLINE_CAPACITY`
 #[inline(always)]
 pub(crate) fn try_inline(words: impl AsRef<[u64]>) -> Option<ArrayBitmap> {
     let words = words.as_ref();
     if words.len() <= WORDS_INLINE {
         if let Ok(array) = <ArrayBitmap>::try_from(words)
-            && msb(array[WORDS_INLINE - 1])
+            && msb!(array[WORDS_INLINE - 1])
         {
             return None;
         }
@@ -60,8 +51,9 @@ pub(crate) fn try_inline(words: impl AsRef<[u64]>) -> Option<ArrayBitmap> {
 /// with minimum external capacity to avoid immediate reallocation.
 ///
 /// # Performance Note
-/// Creates an intermediate array to ensure MIN_EXTERNAL capacity, which avoids
-/// the allocation churn that would happen with capacity == INLINE_QWORDS.
+/// Creates an intermediate array to ensure `MIN_EXTERNAL` capacity, which
+/// avoids the allocation churn that would happen with capacity ==
+/// `INLINE_QWORDS`.
 #[inline(always)]
 pub(crate) fn inline_promote(words: &[u64; WORDS_INLINE]) -> Vec<u64> {
     let mut ext = [0; WORDS_MINEXT];
@@ -87,16 +79,16 @@ pub(crate) const fn rtrim0(mut slice: &[u64]) -> &[u64] {
 /// allowing controlled transitions between inline and external storage
 /// while maintaining all invariants.
 ///
-/// # Why BitArray?
+/// # Why `BitArray`?
 ///
-/// Direct manipulation of SmolBitmap's packed representation is unsafe
+/// Direct manipulation of `SmolBitmap`'s packed representation is unsafe
 /// because storage mode transitions require careful handling of:
 /// - Memory allocation/deallocation
 /// - Pointer encoding/decoding
 /// - Capacity preservation
 /// - MSB constraints
 ///
-/// BitArray ensures these invariants are maintained during all operations.
+/// `BitArray` ensures these invariants are maintained during all operations.
 pub(crate) enum BitArray {
     /// Inline storage candidate (may be promoted to external if needed)
     InlineCandidate(ArrayBitmap),
@@ -134,8 +126,17 @@ impl From<&[u64]> for BitArray {
     }
 }
 
+impl<const N: usize> From<&[u64; N]> for BitArray {
+    fn from(slice: &[u64; N]) -> Self {
+        if let Some(array) = try_inline(slice) {
+            return Self::InlineCandidate(array);
+        }
+        Self::External(slice.to_vec().into_boxed_slice())
+    }
+}
+
 impl BitArray {
-    /// Creates a BitArray from raw pointer and length.
+    /// Creates a `BitArray` from raw pointer and length.
     /// # Safety
     /// The caller must ensure that:
     /// - `data` is a valid pointer from `Vec::into_raw_parts`
@@ -153,7 +154,7 @@ impl BitArray {
         Self::External(unsafe { Box::from_raw(slice::from_raw_parts_mut(data, len)) })
     }
 
-    /// Reconstructs a BitArray from a finalized array representation.
+    /// Reconstructs a `BitArray` from a finalized array representation.
     /// If the MSB of the last word is clear, it's inline storage.
     /// Otherwise, it's external storage encoded as [ptr, -capacity].
     ///
@@ -162,12 +163,12 @@ impl BitArray {
     /// as a negative value. This preserves the original allocation size,
     /// allowing efficient resize operations without reallocation.
     pub(crate) unsafe fn unpack(array: ArrayBitmap) -> Self {
-        if !msb(array[WORDS_INLINE - 1]) {
-            Self::InlineCandidate(array)
-        } else {
+        if msb!(array[WORDS_INLINE - 1]) {
             let ptr = array[0] as usize as *mut u64;
             let len = (array[1] as i64).unsigned_abs() as usize;
             unsafe { Self::from_raw(ptr, len) }
+        } else {
+            Self::InlineCandidate(array)
         }
     }
 
@@ -179,7 +180,7 @@ impl BitArray {
         }
     }
 
-    /// Converts the BitArray into its finalized array representation.
+    /// Converts the `BitArray` into its finalized array representation.
     /// For inline storage, returns the array as-is.
     /// For external storage, returns [ptr, -capacity] with MSB set in the
     /// second word.
@@ -192,7 +193,7 @@ impl BitArray {
         let mut vec = match self {
             Self::InlineCandidate(array) => {
                 // If MSB is set in inline candidate, we need to spill to external
-                if (array[WORDS_INLINE - 1] as i64) >= 0 {
+                if !msb!(array[WORDS_INLINE - 1]) {
                     return array;
                 }
                 inline_promote(&array)
@@ -238,8 +239,8 @@ impl BitArray {
 
     /// Truncate the storage to the specified length.
     pub(crate) fn truncate(&mut self, len: usize) {
-        for v in self.iter_mut().skip(len) {
-            *v = 0;
+        if len < self.len() {
+            unsafe { self.as_mut().get_unchecked_mut(len..).fill(0) };
         }
     }
 
@@ -277,7 +278,7 @@ impl BitArray {
             let mut vec = mem::take(array).into_vec();
             vec.truncate(slice_n);
             vec.shrink_to_fit();
-            *array = vec.into_boxed_slice()
+            *array = vec.into_boxed_slice();
         }
     }
 
@@ -350,6 +351,192 @@ impl IndexMut<usize> for BitArray {
     }
 }
 
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct StackVec {
+    data: MaybeUninit<ArrayBitmap>,
+    len: u8,
+}
+
+impl Default for StackVec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const MIN_ALLOC: usize = 16;
+
+impl From<ArrayBitmap> for StackVec {
+    fn from(array: ArrayBitmap) -> Self {
+        Self {
+            data: MaybeUninit::new(array),
+            len: array.len() as u8,
+        }
+    }
+}
+
+impl StackVec {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            data: MaybeUninit::uninit(),
+            len: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub fn from_slice(slice: &[u64]) -> Result<Self, &[u64]> {
+        let mut vec = Self::new();
+        vec.extend_from_slice(slice)?;
+        Ok(vec)
+    }
+
+    #[inline(always)]
+    pub const fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    pub const fn extend_from_slice<'s>(&mut self, slice: &'s [u64]) -> Result<(), &'s [u64]> {
+        let len = self.len();
+        let new_len = len + slice.len();
+        if new_len > WORDS_INLINE {
+            return Err(slice);
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(
+                slice.as_ptr(),
+                self.data.as_mut_ptr().add(len).cast::<u64>(),
+                slice.len(),
+            );
+        }
+        self.len = new_len as u8;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn push(&mut self, word: u64) -> Result<(), u64> {
+        let len = self.len();
+        if len == WORDS_INLINE {
+            return Err(word);
+        }
+        unsafe {
+            *self.data.assume_init_mut().get_unchecked_mut(len) = word;
+        }
+        self.len = (len + 1) as u8;
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[u64] {
+        let n = self.len();
+        unsafe { self.data.assume_init_ref().get_unchecked(..n) }
+    }
+
+    #[inline(always)]
+    pub fn as_mut_slice(&mut self) -> &mut [u64] {
+        let n = self.len();
+        unsafe { &mut *self.data.assume_init_mut().get_unchecked_mut(..n) }
+    }
+
+    #[inline(always)]
+    pub fn resize(&mut self, len: usize, word: u64) -> Result<(), usize> {
+        let prev = self.len();
+        if prev < len {
+            if len > WORDS_INLINE {
+                return Err(len - prev);
+            }
+            unsafe {
+                self.data
+                    .assume_init_mut()
+                    .get_unchecked_mut(prev..len)
+                    .fill(word);
+            }
+        }
+        self.len = len as u8;
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn extend_into_vec<I>(&self, rhs: I) -> Vec<u64>
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        let lhs = self.as_slice();
+        let rhs = rhs.into_iter();
+
+        let (rlen, _) = rhs.size_hint();
+        let mut v = Vec::with_capacity((lhs.len() + rlen).max(MIN_ALLOC));
+        v.extend_from_slice(lhs);
+        v.extend(rhs);
+        v
+    }
+
+    pub fn try_extend<I>(&mut self, other: I) -> Result<(), Vec<u64>>
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        let mut other = other.into_iter().peekable();
+        while let Some(word) = other.peek() {
+            if self.push(*word).is_ok() {
+                other.next();
+                continue;
+            }
+            return Err(self.extend_into_vec(other));
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub const fn capacity(&self) -> usize {
+        WORDS_INLINE
+    }
+
+    #[inline(always)]
+    pub const fn as_ptr(&self) -> *const u64 {
+        self.data.as_ptr().cast::<u64>()
+    }
+
+    #[inline(always)]
+    pub const fn as_mut_ptr(&mut self) -> *mut u64 {
+        self.data.as_mut_ptr().cast::<u64>()
+    }
+
+    #[inline(always)]
+    pub fn set_len(&mut self, new_len: usize) {
+        debug_assert!(new_len <= WORDS_INLINE);
+        self.len = new_len as u8;
+    }
+
+    #[inline(always)]
+    pub fn reserve(&mut self, additional: usize) -> Result<(), Vec<u64>> {
+        let new_len = self.len() + additional;
+        if new_len > WORDS_INLINE {
+            let mut vec = Vec::with_capacity(new_len.max(MIN_ALLOC));
+            vec.extend_from_slice(self.as_slice());
+            return Err(vec);
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u64>] {
+        let n = self.len();
+        unsafe {
+            &mut *ptr::slice_from_raw_parts_mut(
+                self.data.as_mut_ptr().add(n).cast::<MaybeUninit<u64>>(),
+                WORDS_INLINE - n,
+            )
+        }
+    }
+}
+
 /// A builder for efficiently constructing bitmaps from raw word data.
 ///
 /// `SmolBitmapBuilder` provides an efficient way to construct bitmaps when
@@ -371,12 +558,71 @@ impl IndexMut<usize> for BitArray {
 /// ```
 pub enum SmolBitmapBuilder {
     #[doc(hidden)]
-    Inline([u64; WORDS_INLINE], usize),
+    Inline(StackVec),
     #[doc(hidden)]
     External(Vec<u64>),
 }
 
+impl From<&[u64]> for SmolBitmapBuilder {
+    fn from(slice: &[u64]) -> Self {
+        Self::from_slice(slice)
+    }
+}
+
+impl From<Vec<u64>> for SmolBitmapBuilder {
+    fn from(vec: Vec<u64>) -> Self {
+        Self::External(vec)
+    }
+}
+
+impl From<SmolBitmapBuilder> for SmolBitmap {
+    fn from(builder: SmolBitmapBuilder) -> Self {
+        builder.finalize()
+    }
+}
+
+impl From<SmolBitmap> for SmolBitmapBuilder {
+    fn from(bitmap: SmolBitmap) -> Self {
+        match bitmap.into_inner() {
+            BitArray::InlineCandidate(array) => Self::Inline(StackVec::from(array)),
+            BitArray::External(alloc) => Self::External(alloc.into_vec()),
+        }
+    }
+}
+
+impl FromIterator<u64> for SmolBitmapBuilder {
+    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
+        let mut builder = Self::new();
+        builder.extend(iter);
+        builder
+    }
+}
+
+impl Default for SmolBitmapBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SmolBitmapBuilder {
+    /// Creates a new, empty `SmolBitmapBuilder`.
+    ///
+    /// This method initializes a new `SmolBitmapBuilder` with inline storage.
+    /// It is suitable for small bitmaps that fit within the inline storage
+    /// capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let builder = SmolBitmapBuilder::new();
+    /// ```
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self::Inline(StackVec::new())
+    }
+
     /// Creates a new builder with the specified word capacity.
     ///
     /// If the capacity is small enough for inline storage (≤2 words),
@@ -400,9 +646,55 @@ impl SmolBitmapBuilder {
     /// ```
     pub fn with_capacity(words: usize) -> Self {
         if words <= WORDS_INLINE {
-            Self::Inline([0; WORDS_INLINE], 0)
+            Self::Inline(StackVec::new())
         } else {
             Self::External(Vec::with_capacity(words))
+        }
+    }
+
+    /// Creates a `SmolBitmapBuilder` from a slice of 64-bit words.
+    ///
+    /// This method initializes the builder with the words from the provided
+    /// slice. If the slice length is small enough for inline storage (≤2
+    /// words), the builder will use inline storage. Otherwise, it allocates
+    /// heap storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `slice` - A slice of 64-bit words to initialize the builder with
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let words = [0b10101010, 0b11110000];
+    /// let builder = SmolBitmapBuilder::from_slice(&words);
+    /// ```
+    pub fn from_slice(slice: &[u64]) -> Self {
+        if let Ok(vec) = StackVec::from_slice(slice) {
+            Self::Inline(vec)
+        } else {
+            Self::External(slice.to_vec())
+        }
+    }
+
+    /// Returns a slice of the words currently in the builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let mut builder = SmolBitmapBuilder::with_capacity(2);
+    /// builder.push(0xFFFF);
+    /// let slice = builder.as_slice();
+    /// assert_eq!(slice, &[0xFFFF]);
+    /// ```
+    pub fn as_slice(&self) -> &[u64] {
+        match self {
+            Self::Inline(a) => a.as_slice(),
+            Self::External(v) => v.as_slice(),
         }
     }
 
@@ -420,7 +712,7 @@ impl SmolBitmapBuilder {
     /// ```
     pub fn as_mut_slice(&mut self) -> &mut [u64] {
         match self {
-            Self::Inline(a, n) => &mut a[..*n],
+            Self::Inline(a) => a.as_mut_slice(),
             Self::External(v) => v.as_mut_slice(),
         }
     }
@@ -446,20 +738,70 @@ impl SmolBitmapBuilder {
     /// ```
     pub fn push(&mut self, word: u64) {
         match self {
-            Self::Inline(a, n) => {
-                if *n < WORDS_INLINE {
-                    a[*n] = word;
-                    *n += 1;
-                } else {
-                    let mut v = Vec::with_capacity(WORDS_INLINE << 1);
-                    v.extend_from_slice(&a[..*n]);
-                    v.push(word);
-                    *self = Self::External(v);
+            Self::Inline(a) => {
+                if let Err(word) = a.push(word) {
+                    *self = Self::External(a.extend_into_vec([word]));
                 }
             }
             Self::External(v) => {
                 v.push(word);
             }
+        }
+    }
+
+    /// Resizes the builder to the specified length, filling new slots with the
+    /// given word.
+    ///
+    /// If the builder was using inline storage and resizing would exceed inline
+    /// capacity, it automatically transitions to heap storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `len` - The new length of the builder.
+    /// * `word` - The 64-bit word to fill new slots with if the builder is
+    ///   expanded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let mut builder = SmolBitmapBuilder::with_capacity(2);
+    /// builder.push(0b1111_0000);
+    /// builder.resize(4, 0b0000_1111);
+    /// ```
+    pub fn resize(&mut self, len: usize, word: u64) {
+        match self {
+            Self::Inline(a) => {
+                if let Err(n) = a.resize(len, word) {
+                    *self = Self::External(a.extend_into_vec(iter::repeat_n(word, n)));
+                }
+            }
+            Self::External(v) => v.resize(len, word),
+        }
+    }
+
+    /// Returns the remaining spare capacity of the builder as a slice of
+    /// `MaybeUninit<u64>`.
+    ///
+    /// This method allows you to safely initialize additional elements in the
+    /// builder without reallocating. After writing to the returned slice, you
+    /// must call a method like `set_len` to update the length of the builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::mem::MaybeUninit;
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let mut builder = SmolBitmapBuilder::with_capacity(10);
+    /// let spare_capacity = builder.spare_capacity_mut();
+    /// assert!(spare_capacity.len() >= 10);
+    /// ```
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<u64>] {
+        match self {
+            Self::Inline(a) => a.spare_capacity_mut(),
+            Self::External(v) => v.spare_capacity_mut(),
         }
     }
 
@@ -483,20 +825,136 @@ impl SmolBitmapBuilder {
     /// ```
     pub fn extend_from_slice(&mut self, slice: &[u64]) {
         match self {
-            Self::Inline(a, n) => {
-                let new_len = *n + slice.len();
-                if new_len <= WORDS_INLINE {
-                    a[*n..new_len].copy_from_slice(slice);
-                    *n = new_len;
-                } else {
-                    let mut v = Vec::with_capacity(new_len);
-                    v.extend_from_slice(&a[..*n]);
-                    v.extend_from_slice(slice);
-                    *self = Self::External(v);
+            Self::Inline(a) => {
+                if let Err(s) = a.extend_from_slice(slice) {
+                    *self = Self::External(a.extend_into_vec(s.iter().copied()));
                 }
             }
             Self::External(v) => {
                 v.extend_from_slice(slice);
+            }
+        }
+    }
+
+    /// Returns the current capacity of the builder.
+    ///
+    /// This represents the number of 64-bit words the builder can hold
+    /// without reallocating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let builder = SmolBitmapBuilder::with_capacity(10);
+    /// assert_eq!(builder.capacity(), 10);
+    /// ```
+    pub const fn capacity(&self) -> usize {
+        match self {
+            Self::Inline(a) => a.capacity(),
+            Self::External(v) => v.capacity(),
+        }
+    }
+
+    /// Returns a raw pointer to the builder's buffer.
+    ///
+    /// This pointer is valid for reads, but not writes, and is only valid
+    /// as long as the builder is not modified.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the builder is not modified while the
+    /// pointer is in use.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let builder = SmolBitmapBuilder::with_capacity(1);
+    /// let ptr = builder.as_ptr();
+    /// ```
+    pub const fn as_ptr(&self) -> *const u64 {
+        match self {
+            Self::Inline(a) => a.as_ptr(),
+            Self::External(v) => v.as_ptr(),
+        }
+    }
+
+    /// Returns a mutable raw pointer to the builder's buffer.
+    ///
+    /// This pointer is valid for both reads and writes, and is only valid
+    /// as long as the builder is not reallocated.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the builder is not reallocated while the
+    /// pointer is in use.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let mut builder = SmolBitmapBuilder::with_capacity(1);
+    /// let ptr = builder.as_mut_ptr();
+    /// ```
+    pub const fn as_mut_ptr(&mut self) -> *mut u64 {
+        match self {
+            Self::Inline(a) => a.as_mut_ptr(),
+            Self::External(v) => v.as_mut_ptr(),
+        }
+    }
+
+    /// Sets the length of the builder.
+    ///
+    /// This method allows for manual adjustment of the builder's length.
+    /// It is the caller's responsibility to ensure that the new length
+    /// does not exceed the capacity.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because it does not check if the new length
+    /// is valid. The caller must ensure that the new length is within the
+    /// capacity and that all elements are properly initialized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmapBuilder;
+    ///
+    /// let mut builder = SmolBitmapBuilder::with_capacity(2);
+    /// unsafe { builder.set_len(1) };
+    /// ```
+    pub unsafe fn set_len(&mut self, new_len: usize) {
+        unsafe {
+            match self {
+                Self::Inline(a) => a.set_len(new_len),
+                Self::External(v) => v.set_len(new_len),
+            }
+        }
+    }
+
+    /// Reserves capacity for at least `additional` more words to be inserted
+    /// in the builder. The collection may reserve more space to avoid frequent
+    /// reallocations.
+    ///
+    /// If the builder is using inline storage and the additional capacity
+    /// would exceed the inline limit, it transitions to heap storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `additional` - The number of additional 64-bit words to reserve space
+    ///   for.
+    pub fn reserve(&mut self, additional: usize) {
+        match self {
+            Self::Inline(a) => {
+                if let Err(vec) = a.reserve(additional) {
+                    *self = Self::External(vec);
+                }
+            }
+            Self::External(v) => {
+                v.reserve(additional);
             }
         }
     }
@@ -520,10 +978,43 @@ impl SmolBitmapBuilder {
     /// assert!(bitmap.get(3));
     /// assert!(!bitmap.get(2));
     /// ```
-    pub fn finalize(self) -> crate::SmolBitmap {
+    pub fn finalize(self) -> SmolBitmap {
         match self {
-            Self::Inline(a, n) => crate::SmolBitmap::from(&a[..n]),
-            Self::External(v) => crate::SmolBitmap::from(v),
+            Self::Inline(a) => SmolBitmap::from(a.as_slice()),
+            Self::External(v) => SmolBitmap::from(v),
         }
+    }
+}
+
+impl Extend<u64> for SmolBitmapBuilder {
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        let iter = iter.into_iter();
+        let (iter_len, _) = iter.size_hint();
+        self.reserve(iter_len);
+        match self {
+            Self::Inline(a) => {
+                if let Err(vec) = a.try_extend(iter) {
+                    *self = Self::External(vec);
+                }
+            }
+            Self::External(v) => v.extend(iter),
+        }
+    }
+}
+
+impl Deref for SmolBitmapBuilder {
+    type Target = [u64];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl DerefMut for SmolBitmapBuilder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
     }
 }

@@ -1,8 +1,131 @@
 //! Implementations of set operations for `SmolBitmap`.
 
-use crate::{SmolBitmap, storage::bitpos};
+use crate::{SmolBitmap, macros::bitpos};
 
 impl SmolBitmap {
+    /// Checks if the bit at the specified index is set.
+    ///
+    /// This is an alias for the [`SmolBitmap::get`] method.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the bit to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the bit at the specified index is set, otherwise
+    /// `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smol_bitmap::SmolBitmap;
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(10);
+    /// assert!(bitmap.contains(10));
+    /// assert!(!bitmap.contains(5));
+    /// ```
+    #[inline(always)]
+    #[doc(alias = "get")]
+    pub fn contains(&self, index: usize) -> bool {
+        self.get(index)
+    }
+
+    /// Removes and returns the index of the first set bit in the bitmap, or
+    /// [`None`] if the bitmap is empty.
+    ///
+    /// This operation modifies the bitmap by clearing the first set bit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smol_bitmap::SmolBitmap;
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
+    ///
+    /// assert_eq!(bitmap.pop_first(), Some(5));
+    /// assert_eq!(bitmap.pop_first(), Some(10));
+    /// assert_eq!(bitmap.pop_first(), None);
+    /// ```
+    #[inline]
+    pub fn pop_first(&mut self) -> Option<usize> {
+        if let Some(first) = self.first() {
+            self.remove(first);
+            Some(first)
+        } else {
+            None
+        }
+    }
+
+    /// Removes and returns the index of the last set bit in the bitmap, or
+    /// [`None`] if the bitmap is empty.
+    ///
+    /// This operation modifies the bitmap by clearing the last set bit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smol_bitmap::SmolBitmap;
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(5);
+    /// bitmap.insert(10);
+    ///
+    /// assert_eq!(bitmap.pop_last(), Some(10));
+    /// assert_eq!(bitmap.pop_last(), Some(5));
+    /// assert_eq!(bitmap.pop_last(), None);
+    /// ```
+    #[inline]
+    pub fn pop_last(&mut self) -> Option<usize> {
+        if let Some(last) = self.last() {
+            self.remove(last);
+            Some(last)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the number of set bits in the bitmap.
+    ///
+    /// This is an alias for the [`SmolBitmap::count_ones`] method.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smol_bitmap::SmolBitmap;
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(10);
+    /// bitmap.insert(20);
+    /// assert_eq!(bitmap.cardinality(), 2);
+    /// ```
+    #[inline(always)]
+    #[doc(alias = "count_ones")]
+    pub fn cardinality(&self) -> usize {
+        self.count_ones()
+    }
+
+    /// Inserts a bit at the given index, setting it to `true`.
+    ///
+    /// Returns `true` if the bit was previously unset (insertion occurred),
+    /// or `false` if it was already set.
+    ///
+    /// This is an alias for the [`SmolBitmap::insert`] method.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use smol_bitmap::SmolBitmap;
+    /// let mut bitmap = SmolBitmap::new();
+    ///
+    /// assert!(bitmap.insert(10)); // First insertion
+    /// assert!(!bitmap.insert(10)); // Already set
+    /// ```
+    #[inline(always)]
+    #[doc(alias = "insert")]
+    pub fn add(&mut self, index: usize) -> bool {
+        self.insert(index)
+    }
+
     /// Performs a bitwise OR operation with another bitmap.
     ///
     /// This sets each bit in `self` to `self[i] | other[i]`. If `other`
@@ -15,8 +138,8 @@ impl SmolBitmap {
     /// let mut a = SmolBitmap::new();
     /// let mut b = SmolBitmap::new();
     ///
-    /// a.set(10, true);
-    /// b.set(20, true);
+    /// a.insert(10);
+    /// b.insert(20);
     ///
     /// a.union_with(&b);
     /// assert!(a.get(10));
@@ -72,9 +195,9 @@ impl SmolBitmap {
     /// let mut a = SmolBitmap::new();
     /// let mut b = SmolBitmap::new();
     ///
-    /// a.set(10, true);
-    /// a.set(20, true);
-    /// b.set(10, true);
+    /// a.insert(10);
+    /// a.insert(20);
+    /// b.insert(10);
     ///
     /// a.intersection_with(&b);
     /// assert!(a.get(10));
@@ -292,18 +415,18 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert!(bitmap.all()); // Empty bitmap
     ///
-    /// bitmap.set(0, true);
-    /// bitmap.set(1, true);
-    /// bitmap.set(2, true);
+    /// bitmap.insert(0);
+    /// bitmap.insert(1);
+    /// bitmap.insert(2);
     /// assert!(bitmap.all()); // All bits 0-2 are set
     ///
-    /// bitmap.set(4, true);
+    /// bitmap.insert(4);
     /// assert!(!bitmap.all()); // Bit 3 is not set
     /// ```
     #[must_use]
     pub fn all(&self) -> bool {
         if let Some(max_bit) = self.last() {
-            let (last_wi, last_bi) = bitpos(max_bit);
+            let (last_wi, last_bi) = bitpos!(max_bit);
             let slice = self.as_slice();
 
             // Check complete words
@@ -326,6 +449,27 @@ impl SmolBitmap {
         }
     }
 
+    /// Returns `true` if any bit is set.
+    ///
+    /// This is equivalent to `!self.is_empty()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// assert!(!bitmap.any());
+    ///
+    /// bitmap.insert(42);
+    /// assert!(bitmap.any());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn any(&self) -> bool {
+        !self.is_empty()
+    }
+
     /// Returns `true` if no bits are set.
     ///
     /// This is equivalent to `self.is_empty()`.
@@ -338,7 +482,7 @@ impl SmolBitmap {
     /// let mut bitmap = SmolBitmap::new();
     /// assert!(bitmap.none());
     ///
-    /// bitmap.set(42, true);
+    /// bitmap.insert(42);
     /// assert!(!bitmap.none());
     /// ```
     #[inline]

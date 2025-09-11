@@ -8,7 +8,7 @@ fn test_inline_storage() {
     // Test inline storage capacity
     for i in 0..SmolBitmap::inline_capacity() {
         assert!(!mask.get(i));
-        mask.set(i, true);
+        mask.insert(i);
         assert!(mask.get(i));
     }
 }
@@ -30,7 +30,7 @@ fn test_reserve_transitions_to_external() {
     assert!(bitmap.capacity() >= 300, "Capacity should be at least 300");
 
     // Should be able to set bits beyond inline capacity
-    bitmap.set(200, true);
+    bitmap.insert(200);
     assert!(bitmap.get(200));
 }
 
@@ -40,7 +40,7 @@ fn test_highest_inline_bit_forces_external() {
     let highest_inline_bit = SmolBitmap::inline_capacity();
 
     // Set the bit at inline capacity (which is beyond inline storage)
-    bitmap.set(highest_inline_bit, true);
+    bitmap.insert(highest_inline_bit);
 
     // This should force external storage because it's beyond inline capacity
     assert!(
@@ -56,7 +56,7 @@ fn test_external_storage() {
 
     // Force external storage
     let inline_cap = SmolBitmap::inline_capacity();
-    mask.set(inline_cap, true);
+    mask.insert(inline_cap);
     assert!(mask.is_spilled());
     assert!(mask.get(inline_cap));
 
@@ -71,12 +71,12 @@ fn test_union_intersection_difference() {
     let mut a = SmolBitmap::new();
     let mut b = SmolBitmap::new();
 
-    a.set(10, true);
-    a.set(20, true);
-    a.set(30, true);
-    b.set(20, true);
-    b.set(30, true);
-    b.set(40, true);
+    a.insert(10);
+    a.insert(20);
+    a.insert(30);
+    b.insert(20);
+    b.insert(30);
+    b.insert(40);
 
     // Union: {10, 20, 30, 40}
     let union = a.union(&b);
@@ -110,12 +110,12 @@ fn test_union_intersection_difference() {
 #[test]
 fn test_iter_forward_backward() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(10, true);
-    bitmap.set(63, true);
-    bitmap.set(64, true);
-    bitmap.set(100, true);
-    bitmap.set(200, true);
+    bitmap.insert(0);
+    bitmap.insert(10);
+    bitmap.insert(63);
+    bitmap.insert(64);
+    bitmap.insert(100);
+    bitmap.insert(200);
 
     // Forward iteration
     let collected: Vec<_> = bitmap.iter().collect();
@@ -152,14 +152,14 @@ fn test_eq_and_ord() {
 
     assert_eq!(a, b);
 
-    a.set(10, true);
+    a.insert(10);
     assert_ne!(a, b);
     assert!(a > b); // Non-empty > empty
 
-    b.set(10, true);
+    b.insert(10);
     assert_eq!(a, b);
 
-    b.set(20, true);
+    b.insert(20);
     assert!(a < b); // {10} < {10, 20}
 }
 
@@ -168,12 +168,12 @@ fn test_shrink_to_fit() {
     let mut bitmap = SmolBitmap::new();
 
     // Set a high bit then clear it
-    bitmap.set(300, true);
+    bitmap.insert(300);
     assert!(bitmap.is_spilled());
-    bitmap.set(300, false);
+    bitmap.remove(300);
 
     // Set a low bit
-    bitmap.set(50, true);
+    bitmap.insert(50);
 
     bitmap.shrink_to_fit();
     // Should potentially move back to inline if possible
@@ -185,7 +185,7 @@ fn test_shrink_to_fit() {
 fn test_exact_size_iterator() {
     let mut bitmap = SmolBitmap::new();
     for i in (0..300).step_by(2) {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
 
     let iter = bitmap.iter();
@@ -196,12 +196,12 @@ fn test_exact_size_iterator() {
 #[test]
 fn test_retain() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(2, true);
-    bitmap.set(5, true);
-    bitmap.set(8, true);
-    bitmap.set(10, true);
-    bitmap.set(15, true);
+    bitmap.insert(1);
+    bitmap.insert(2);
+    bitmap.insert(5);
+    bitmap.insert(8);
+    bitmap.insert(10);
+    bitmap.insert(15);
 
     // Retain only even indices
     bitmap.retain(|bit| bit.is_multiple_of(2));
@@ -220,9 +220,9 @@ fn test_serialization() {
     use serde_json;
 
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(5, true);
-    bitmap.set(100, true);
-    bitmap.set(200, true);
+    bitmap.insert(5);
+    bitmap.insert(100);
+    bitmap.insert(200);
 
     // JSON serialization
     let json = serde_json::to_string(&bitmap).expect("Should serialize to JSON");
@@ -279,7 +279,7 @@ mod property_tests {
         fn prop_iter_matches_set(indices in arb_bit_indices()) {
             let mut bitmap = SmolBitmap::new();
             for &idx in &indices {
-                bitmap.set(idx, true);
+                bitmap.insert(idx);
             }
 
             let collected: BTreeSet<usize> = bitmap.iter().collect();
@@ -295,10 +295,10 @@ mod property_tests {
             let mut b = SmolBitmap::new();
 
             for &idx in &indices_a {
-                a.set(idx, true);
+                a.insert(idx);
             }
             for &idx in &indices_b {
-                b.set(idx, true);
+                b.insert(idx);
             }
 
             let union_ab = a.union(&b);
@@ -316,10 +316,10 @@ mod property_tests {
             let mut b = SmolBitmap::new();
 
             for &idx in &indices_a {
-                a.set(idx, true);
+                a.insert(idx);
             }
             for &idx in &indices_b {
-                b.set(idx, true);
+                b.insert(idx);
             }
 
             let inter_ab = a.intersection(&b);
@@ -338,14 +338,14 @@ mod property_tests {
 #[test]
 fn test_bitwise_operators() {
     let mut a = SmolBitmap::new();
-    a.set(0, true);
-    a.set(1, true);
-    a.set(3, true);
+    a.insert(0);
+    a.insert(1);
+    a.insert(3);
 
     let mut b = SmolBitmap::new();
-    b.set(1, true);
-    b.set(2, true);
-    b.set(3, true);
+    b.insert(1);
+    b.insert(2);
+    b.insert(3);
 
     // Test BitAnd (&)
     let and_result = &a & &b;
@@ -373,14 +373,14 @@ fn test_bitwise_operators() {
 fn test_bitwise_assign_operators() {
     // Test BitAndAssign (&=)
     let mut a = SmolBitmap::new();
-    a.set(0, true);
-    a.set(1, true);
-    a.set(3, true);
+    a.insert(0);
+    a.insert(1);
+    a.insert(3);
 
     let mut b = SmolBitmap::new();
-    b.set(1, true);
-    b.set(2, true);
-    b.set(3, true);
+    b.insert(1);
+    b.insert(2);
+    b.insert(3);
 
     a &= &b;
     assert!(!a.get(0)); // Was only in a, removed
@@ -390,12 +390,12 @@ fn test_bitwise_assign_operators() {
 
     // Test BitOrAssign (|=)
     let mut c = SmolBitmap::new();
-    c.set(0, true);
-    c.set(1, true);
+    c.insert(0);
+    c.insert(1);
 
     let mut d = SmolBitmap::new();
-    d.set(2, true);
-    d.set(3, true);
+    d.insert(2);
+    d.insert(3);
 
     c |= &d;
     assert!(c.get(0));
@@ -405,14 +405,14 @@ fn test_bitwise_assign_operators() {
 
     // Test BitXorAssign (^=)
     let mut e = SmolBitmap::new();
-    e.set(0, true);
-    e.set(1, true);
-    e.set(3, true);
+    e.insert(0);
+    e.insert(1);
+    e.insert(3);
 
     let mut f = SmolBitmap::new();
-    f.set(1, true);
-    f.set(2, true);
-    f.set(3, true);
+    f.insert(1);
+    f.insert(2);
+    f.insert(3);
 
     e ^= &f;
     assert!(e.get(0)); // Only in original e
@@ -424,9 +424,9 @@ fn test_bitwise_assign_operators() {
 #[test]
 fn test_not_operator() {
     let mut a = SmolBitmap::new();
-    a.set(0, true);
-    a.set(2, true);
-    a.set(4, true);
+    a.insert(0);
+    a.insert(2);
+    a.insert(4);
 
     let b = !&a;
     assert!(!b.get(0)); // Was set, now unset
@@ -445,14 +445,14 @@ fn test_not_operator() {
 fn test_bitwise_operators_spilled() {
     // Test with spilled storage (>127 bits)
     let mut a = SmolBitmap::new();
-    a.set(150, true);
-    a.set(200, true);
-    a.set(250, true);
+    a.insert(150);
+    a.insert(200);
+    a.insert(250);
 
     let mut b = SmolBitmap::new();
-    b.set(200, true);
-    b.set(250, true);
-    b.set(300, true);
+    b.insert(200);
+    b.insert(250);
+    b.insert(300);
 
     let and_result = &a & &b;
     assert!(!and_result.get(150));
@@ -480,9 +480,9 @@ fn test_bitwise_operators_spilled() {
 #[test]
 fn test_shift_left() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(1, true);
-    bitmap.set(2, true);
+    bitmap.insert(0);
+    bitmap.insert(1);
+    bitmap.insert(2);
 
     let shifted = bitmap.shl(3);
     assert!(!shifted.get(0));
@@ -498,31 +498,11 @@ fn test_shift_left() {
 }
 
 #[test]
-fn test_shift_right() {
-    let mut bitmap = SmolBitmap::new();
-    bitmap.set(3, true);
-    bitmap.set(4, true);
-    bitmap.set(5, true);
-
-    let shifted = bitmap.shr(3);
-    assert!(shifted.get(0));
-    assert!(shifted.get(1));
-    assert!(shifted.get(2));
-    assert!(!shifted.get(3));
-
-    // Test shifting below zero
-    let shifted2 = bitmap.shr(4);
-    assert!(shifted2.get(0)); // bit 4 -> 0
-    assert!(shifted2.get(1)); // bit 5 -> 1
-    assert!(!shifted2.get(2)); // no more bits
-}
-
-#[test]
 fn test_shift_operations_spilled() {
     // Test with spilled storage
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(150, true);
-    bitmap.set(200, true);
+    bitmap.insert(150);
+    bitmap.insert(200);
 
     let shifted_left = bitmap.shl(50);
     assert!(shifted_left.get(200));
@@ -547,23 +527,23 @@ fn test_any_all_none() {
     assert!(bitmap.none());
 
     // Single bit
-    bitmap.set(5, true);
+    bitmap.insert(5);
     assert!(bitmap.any());
     assert!(!bitmap.all()); // Not all bits from 0-5 are set
     assert!(!bitmap.none());
 
     // Multiple consecutive bits
-    bitmap.set(0, true);
-    bitmap.set(1, true);
-    bitmap.set(2, true);
-    bitmap.set(3, true);
-    bitmap.set(4, true);
+    bitmap.insert(0);
+    bitmap.insert(1);
+    bitmap.insert(2);
+    bitmap.insert(3);
+    bitmap.insert(4);
     assert!(bitmap.any());
     assert!(bitmap.all()); // All bits 0-5 are set
     assert!(!bitmap.none());
 
     // Gap in bits
-    bitmap.set(7, true);
+    bitmap.insert(7);
     assert!(bitmap.any());
     assert!(!bitmap.all()); // Bit 6 is not set
     assert!(!bitmap.none());
@@ -578,17 +558,17 @@ fn test_leading_trailing_zeros() {
     assert_eq!(bitmap.trailing_zeros(), None);
 
     // Single bit at position 5
-    bitmap.set(5, true);
+    bitmap.insert(5);
     assert_eq!(bitmap.leading_zeros(), Some(5)); // 5 leading zeros (bits 0-4)
     assert_eq!(bitmap.trailing_zeros(), Some(5)); // 5 trailing zeros from bit 5 down to bit 0
 
     // Add bit at position 0
-    bitmap.set(0, true);
+    bitmap.insert(0);
     assert_eq!(bitmap.leading_zeros(), Some(0)); // No leading zeros
     assert_eq!(bitmap.trailing_zeros(), Some(4)); // 4 trailing zeros from bit 5 down to bit 1 (bit 0 is set)
 
     // Add bit at position 10, leaving gap
-    bitmap.set(10, true);
+    bitmap.insert(10);
     assert_eq!(bitmap.leading_zeros(), Some(0)); // Still no leading zeros
     // Trailing zeros checks from bit 10 down - bits 9,8,7,6 are unset
     assert_eq!(bitmap.trailing_zeros(), Some(4)); // 4 trailing zeros from bit
@@ -604,16 +584,16 @@ fn test_leading_trailing_ones() {
     assert_eq!(bitmap.trailing_ones(), 0);
 
     // Consecutive ones from bit 0
-    bitmap.set(0, true);
-    bitmap.set(1, true);
-    bitmap.set(2, true);
+    bitmap.insert(0);
+    bitmap.insert(1);
+    bitmap.insert(2);
     assert_eq!(bitmap.leading_ones(), 3);
     assert_eq!(bitmap.trailing_ones(), 3);
 
     // Add gap and more bits
-    bitmap.set(5, true);
-    bitmap.set(6, true);
-    bitmap.set(7, true);
+    bitmap.insert(5);
+    bitmap.insert(6);
+    bitmap.insert(7);
     assert_eq!(bitmap.leading_ones(), 3); // Still 3 (stops at bit 3)
     assert_eq!(bitmap.trailing_ones(), 3); // 3 consecutive from bit 7 down to 5
 }
@@ -625,10 +605,10 @@ fn test_leading_trailing_ones() {
 #[test]
 fn test_get_range() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(2, true);
-    bitmap.set(3, true);
-    bitmap.set(5, true);
+    bitmap.insert(0);
+    bitmap.insert(2);
+    bitmap.insert(3);
+    bitmap.insert(5);
 
     // Extract bits 0-4: 101101 in positions -> 0b00101101
     assert_eq!(bitmap.get_range(0, 6), 0b101101);
@@ -643,7 +623,7 @@ fn test_get_range() {
     let mut large = SmolBitmap::new();
     for i in 0usize..100 {
         if i.is_multiple_of(2) {
-            large.set(i, true);
+            large.insert(i);
         }
     }
     // Should only extract first 64 bits
@@ -652,7 +632,7 @@ fn test_get_range() {
 }
 
 #[test]
-#[should_panic(expected = "start must be <= end")]
+#[should_panic(expected = "beg must be <= end")]
 fn test_get_range_panic() {
     let bitmap = SmolBitmap::new();
     _ = bitmap.get_range(10, 5); // start > end
@@ -664,11 +644,11 @@ fn test_get_range_panic() {
 
 #[test]
 fn test_index_trait() {
-    use std::ops::Index;
+    use core::ops::Index;
 
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(5, true);
-    bitmap.set(10, true);
+    bitmap.insert(5);
+    bitmap.insert(10);
 
     // Test Index<usize>
     assert!(*bitmap.index(5));
@@ -677,14 +657,14 @@ fn test_index_trait() {
     assert!(!(*bitmap.index(6)));
 
     // Test with spilled storage
-    bitmap.set(200, true);
+    bitmap.insert(200);
     assert!(*bitmap.index(200));
     assert!(!(*bitmap.index(199)));
 }
 
 #[test]
 fn test_index_no_panic() {
-    use std::ops::Index;
+    use core::ops::Index;
 
     let bitmap = SmolBitmap::new();
     // Index trait now returns false for out-of-bounds, consistent with get()
@@ -692,7 +672,7 @@ fn test_index_no_panic() {
     assert!(!(*bitmap.index(0))); // Unset bit returns false
 
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(5, true);
+    bitmap.insert(5);
     assert!(*bitmap.index(5)); // Set bit returns true
 }
 
@@ -705,10 +685,10 @@ fn test_find_zero_methods() {
     assert_eq!(bitmap.find_last_zero(), Some(0));
 
     // Set some bits
-    bitmap.set(0, true);
-    bitmap.set(1, true);
-    bitmap.set(3, true);
-    bitmap.set(5, true);
+    bitmap.insert(0);
+    bitmap.insert(1);
+    bitmap.insert(3);
+    bitmap.insert(5);
 
     assert_eq!(bitmap.find_first_zero(), Some(2));
     assert_eq!(bitmap.find_last_zero(), Some(4));
@@ -724,22 +704,22 @@ fn test_find_zero_methods() {
     // Test with spilled storage
     let mut large = SmolBitmap::new();
     for i in 0..200 {
-        large.set(i, true);
+        large.insert(i);
     }
     assert_eq!(large.find_first_zero(), Some(200));
 
-    large.set(150, false);
+    large.remove(150);
     assert_eq!(large.find_first_zero(), Some(150));
 }
 
 #[test]
 fn test_count_range_methods() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(3, true);
-    bitmap.set(5, true);
-    bitmap.set(7, true);
-    bitmap.set(9, true);
+    bitmap.insert(1);
+    bitmap.insert(3);
+    bitmap.insert(5);
+    bitmap.insert(7);
+    bitmap.insert(9);
 
     assert_eq!(bitmap.count_ones_range(0, 10), 5);
     assert_eq!(bitmap.count_ones_range(2, 8), 3); // bits 3, 5, 7
@@ -755,7 +735,7 @@ fn test_count_range_methods() {
     // Test with large bitmap
     let mut large = SmolBitmap::new();
     for i in (0..300).step_by(2) {
-        large.set(i, true);
+        large.insert(i);
     }
     assert_eq!(large.count_ones_range(0, 100), 50);
     assert_eq!(large.count_zeros_range(0, 100), 50);
@@ -765,8 +745,8 @@ fn test_count_range_methods() {
 fn test_batch_operations() {
     // Test set_all
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(5, true);
+    bitmap.insert(0);
+    bitmap.insert(5);
     bitmap.set_all();
 
     for i in 0..=5 {
@@ -776,7 +756,7 @@ fn test_batch_operations() {
     // Test clear_range
     let mut bitmap = SmolBitmap::new();
     for i in 0..10 {
-        bitmap.set(i, true);
+        bitmap.insert(i);
     }
     bitmap.clear_range(3, 7);
 
@@ -805,7 +785,7 @@ fn test_batch_operations() {
 
     // Test fill
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(10, true); // Establishes a capacity
+    bitmap.insert(10); // Establishes a capacity
     bitmap.fill(true);
 
     for i in 0..=10 {
@@ -846,15 +826,15 @@ fn test_from_primitive_integers() {
     let bitmap = SmolBitmap::from(value);
     let low = bitmap.get_range(0, 64);
     let high = bitmap.get_range(64, 128);
-    assert_eq!((low as u128) | ((high as u128) << 64), value);
+    assert_eq!(u128::from(low) | (u128::from(high) << 64), value);
 }
 
 #[test]
 fn test_try_from_bitmap() {
     // Successful conversions
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(1, true);
-    bitmap.set(3, true);
+    bitmap.insert(1);
+    bitmap.insert(3);
 
     let u8_val = u8::try_from(&bitmap).unwrap();
     assert_eq!(u8_val, 0b00001010);
@@ -872,23 +852,23 @@ fn test_try_from_bitmap() {
     assert_eq!(u128_val, 0b00001010);
 
     // Failed conversions - too many bits
-    bitmap.set(8, true); // Beyond u8 range
+    bitmap.insert(8); // Beyond u8 range
     assert!(u8::try_from(&bitmap).is_err());
     assert!(u16::try_from(&bitmap).is_ok());
 
-    bitmap.set(16, true); // Beyond u16 range
+    bitmap.insert(16); // Beyond u16 range
     assert!(u16::try_from(&bitmap).is_err());
     assert!(u32::try_from(&bitmap).is_ok());
 
-    bitmap.set(32, true); // Beyond u32 range
+    bitmap.insert(32); // Beyond u32 range
     assert!(u32::try_from(&bitmap).is_err());
     assert!(u64::try_from(&bitmap).is_ok());
 
-    bitmap.set(64, true); // Beyond u64 range
+    bitmap.insert(64); // Beyond u64 range
     assert!(u64::try_from(&bitmap).is_err());
     assert!(u128::try_from(&bitmap).is_ok());
 
-    bitmap.set(128, true); // Beyond u128 range
+    bitmap.insert(128); // Beyond u128 range
     match u128::try_from(&bitmap) {
         Err(TryFromBitmapError::TooManyBits {
             max_bits,
@@ -903,46 +883,46 @@ fn test_try_from_bitmap() {
 
 #[test]
 fn test_bytes_conversion() {
-    // Test to_bytes_le and from_bytes_le
+    // Test to_le_bytes and from_le_bytes
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(0, true);
-    bitmap.set(7, true);
-    bitmap.set(8, true);
-    bitmap.set(15, true);
+    bitmap.insert(0);
+    bitmap.insert(7);
+    bitmap.insert(8);
+    bitmap.insert(15);
 
-    let bytes_le = bitmap.to_bytes_le();
-    assert_eq!(bytes_le.len(), 2);
+    let bytes_le = bitmap.to_le_bytes();
     assert_eq!(bytes_le[0], 0b10000001); // bits 0 and 7
     assert_eq!(bytes_le[1], 0b10000001); // bits 8 and 15
+    assert!(bytes_le[2..].iter().all(|&b| b == 0));
 
-    let restored = SmolBitmap::from_bytes_le(&bytes_le);
+    let (restored, _) = SmolBitmap::from_le_bytes(&bytes_le);
     assert_eq!(bitmap, restored);
 
-    // Test to_bytes_be and from_bytes_be
-    let bytes_be = bitmap.to_bytes_be();
-    let restored = SmolBitmap::from_bytes_be(&bytes_be);
+    // Test to_be_bytes and from_be_bytes
+    let bytes_be = bitmap.to_be_bytes();
+    let (restored, _) = SmolBitmap::from_be_bytes(&bytes_be);
     assert_eq!(bitmap, restored);
 
     // Test with larger bitmap
     let mut large = SmolBitmap::new();
     for i in (0..256).step_by(8) {
-        large.set(i, true);
+        large.insert(i);
     }
 
-    let bytes_le = large.to_bytes_le();
-    let restored = SmolBitmap::from_bytes_le(&bytes_le);
+    let bytes_le = large.to_le_bytes();
+    let (restored, _) = SmolBitmap::from_le_bytes(&bytes_le);
     assert_eq!(large, restored);
 
-    let bytes_be = large.to_bytes_be();
-    let restored = SmolBitmap::from_bytes_be(&bytes_be);
+    let bytes_be = large.to_be_bytes();
+    let (restored, _) = SmolBitmap::from_be_bytes(&bytes_be);
     assert_eq!(large, restored);
 
     // Test empty bitmap
     let empty = SmolBitmap::new();
-    let bytes_le = empty.to_bytes_le();
+    let bytes_le = empty.to_le_bytes();
     assert!(bytes_le.is_empty());
 
-    let restored = SmolBitmap::from_bytes_le(&bytes_le);
+    let (restored, _) = SmolBitmap::from_le_bytes(&bytes_le);
     assert_eq!(empty, restored);
 }
 
@@ -980,13 +960,13 @@ fn test_display_formats() {
 #[test]
 fn test_range_bitmap_methods() {
     let mut bitmap = SmolBitmap::new();
-    bitmap.set(2, true);
-    bitmap.set(3, true);
-    bitmap.set(5, true);
-    bitmap.set(7, true);
+    bitmap.insert(2);
+    bitmap.insert(3);
+    bitmap.insert(5);
+    bitmap.insert(7);
 
-    // Test get_range_bitmap
-    let sub = bitmap.get_range_bitmap(2, 8);
+    // Test bitslice
+    let sub = bitmap.bitslice(2, 8);
     assert!(sub.get(0)); // bit 2 -> 0
     assert!(sub.get(1)); // bit 3 -> 1
     assert!(!sub.get(2)); // bit 4 -> 2
@@ -994,14 +974,14 @@ fn test_range_bitmap_methods() {
     assert!(!sub.get(4)); // bit 6 -> 4
     assert!(sub.get(5)); // bit 7 -> 5
 
-    // Test get_from
-    let sub = bitmap.get_from(3);
+    // Test skip
+    let sub = bitmap.skip(3);
     assert!(sub.get(0)); // bit 3 -> 0
     assert!(sub.get(2)); // bit 5 -> 2
     assert!(sub.get(4)); // bit 7 -> 4
 
-    // Test get_to
-    let sub = bitmap.get_to(5);
+    // Test take
+    let sub = bitmap.take(5);
     assert!(sub.get(2));
     assert!(sub.get(3));
     assert!(!sub.get(5));
