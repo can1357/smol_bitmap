@@ -3,7 +3,6 @@
 use rkyv::{
     Archive, Deserialize, Serialize,
     rancor::Fallible,
-    rend::u64_le,
     ser::{Allocator, Writer},
     vec::ArchivedVec,
 };
@@ -11,7 +10,7 @@ use rkyv::{
 use crate::{SmolBitmap, SmolBitmapBuilder};
 
 /// The archived version of SmolBitmap.
-pub type ArchivedSmolBitmap = ArchivedVec<u64_le>;
+pub type ArchivedSmolBitmap = ArchivedVec<<u64 as rkyv::Archive>::Archived>;
 
 /// The resolver for SmolBitmap.
 pub type SmolBitmapResolver = rkyv::vec::VecResolver;
