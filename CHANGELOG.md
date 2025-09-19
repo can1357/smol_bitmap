@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-09-19
+
+### Added
+
+- **Serde support** with multiple serialization formats:
+
+  - `words`: Serialize as a sequence of u64 words (compact for dense bitmaps)
+  - `sorted_set`: Serialize as a sorted sequence of set bit indices (efficient for sparse bitmaps)
+  - `unordered_set`: Serialize as an unordered sequence of set bit indices
+  - `le_bytes`, `be_bytes`, `ne_bytes`: Serialize as byte arrays with specified endianness
+  - Default implementation uses little-endian bytes for binary formats and base64-encoded strings for human-readable formats
+  - Comprehensive test coverage using `serde_test`
+
+- **Rkyv support** for zero-copy deserialization:
+  - Efficient archival format using little-endian u64 words
+  - Compatible with `rkyv` 0.8
+
+### Changed
+
+- Made `serde` an optional feature (enabled by default)
+- Added `rkyv` as an optional feature
+- Added `data-encoding` dependency for base64 support in human-readable serde formats
+
 ## [0.2.2] - 2025-09-11
 
 ### Changed

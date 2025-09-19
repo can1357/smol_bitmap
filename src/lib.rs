@@ -81,6 +81,15 @@ mod set_ops;
 pub mod storage;
 pub mod traits;
 
+#[cfg(feature = "rkyv")]
+pub mod rkyv;
+
+#[cfg(feature = "rkyv")]
+pub use rkyv::{ArchivedSmolBitmap, SmolBitmapResolver};
+
+#[cfg(feature = "serde")]
+pub mod serde;
+
 // Re-exports
 pub use bitmap::SmolBitmap;
 pub use iter::{BitIter, IntoIter, Iter, SelectIter};
