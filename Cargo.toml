@@ -1,6 +1,6 @@
 [package]
 name = "smol_bitmap"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Can Boluk <me@can.ac>"]
@@ -24,10 +24,13 @@ maintenance = { status = "actively-developed" }
 [features]
 default = ["std"]
 std = []
-serde = ["dep:serde", "std"]
+rkyv = ["dep:rkyv"]
+serde = ["dep:serde", "std", "dep:data-encoding"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
+rkyv = { version = "0.8", optional = true }
+data-encoding = { version = "2.9", optional = true }
 
 [dev-dependencies]
 criterion = "0.7"
@@ -37,6 +40,8 @@ quickcheck_macros = "1.0"
 serde_json = "1.0"
 bitvec = "1.0"
 num-bigint = "0.4"
+serde_test = "1.0"
+postcard = { version = "1.0", features = ["alloc"] }
 
 [[bench]]
 name = "basic_bench"
