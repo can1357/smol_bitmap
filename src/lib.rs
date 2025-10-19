@@ -95,3 +95,49 @@ pub use bitmap::SmolBitmap;
 pub use iter::{BitIter, IntoIter, Iter, SelectIter};
 pub use storage::SmolBitmapBuilder;
 pub use traits::{ParseBitmapError, TryFromBitmapError};
+
+/// Creates a `SmolBitmap` from a list of bit positions.
+///
+/// This macro takes a comma-separated list of `usize` values representing
+/// bit positions to set. It automatically determines the required capacity
+/// based on the maximum bit position and creates an appropriately sized
+/// bitmap.
+///
+/// # Examples
+///
+/// ```
+/// use smol_bitmap::{SmolBitmap, bitmap};
+///
+/// // Create a bitmap with bits 1, 5, and 10 set
+/// let bmp = bitmap![1, 5, 10];
+/// assert!(bmp.get(1));
+/// assert!(bmp.get(5));
+/// assert!(bmp.get(10));
+/// assert!(!bmp.get(0));
+/// assert!(!bmp.get(3));
+///
+/// // Empty bitmap
+/// let empty = bitmap![];
+/// assert_eq!(empty.capacity(), SmolBitmap::inline_capacity());
+///
+/// // Large bit positions automatically allocate heap storage
+/// let large = bitmap![100, 200, 300];
+/// assert!(large.get(100));
+/// assert!(large.get(200));
+/// assert!(large.get(300));
+/// ```
+#[macro_export]
+macro_rules! bitmap {
+    () => {
+        $crate::SmolBitmap::new()
+    };
+    ($($bit:expr),+ $(,)?) => {{
+        let bits = [$($bit),+];
+        let capacity = bits.iter().copied().max().map(|max| max + 1).unwrap_or(0);
+        let mut bitmap = $crate::SmolBitmap::with_capacity(capacity);
+        for bit in bits {
+            bitmap.insert(bit);
+        }
+        bitmap
+    }};
+}

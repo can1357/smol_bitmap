@@ -27,6 +27,7 @@ impl SmolBitmap {
     /// ```
     #[inline(always)]
     #[doc(alias = "get")]
+    #[must_use]
     pub fn contains(&self, index: usize) -> bool {
         self.get(index)
     }
@@ -50,12 +51,9 @@ impl SmolBitmap {
     /// ```
     #[inline]
     pub fn pop_first(&mut self) -> Option<usize> {
-        if let Some(first) = self.first() {
+        self.first().inspect(|&first| {
             self.remove(first);
-            Some(first)
-        } else {
-            None
-        }
+        })
     }
 
     /// Removes and returns the index of the last set bit in the bitmap, or
@@ -77,12 +75,9 @@ impl SmolBitmap {
     /// ```
     #[inline]
     pub fn pop_last(&mut self) -> Option<usize> {
-        if let Some(last) = self.last() {
+        self.last().inspect(|&last| {
             self.remove(last);
-            Some(last)
-        } else {
-            None
-        }
+        })
     }
 
     /// Returns the number of set bits in the bitmap.
@@ -100,6 +95,7 @@ impl SmolBitmap {
     /// ```
     #[inline(always)]
     #[doc(alias = "count_ones")]
+    #[must_use]
     pub fn cardinality(&self) -> usize {
         self.count_ones()
     }

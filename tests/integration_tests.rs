@@ -370,6 +370,7 @@ fn test_bitwise_operators() {
 }
 
 #[test]
+#[allow(clippy::many_single_char_names)]
 fn test_bitwise_assign_operators() {
     // Test BitAndAssign (&=)
     let mut a = SmolBitmap::new();
@@ -890,17 +891,17 @@ fn test_bytes_conversion() {
     bitmap.insert(8);
     bitmap.insert(15);
 
-    let bytes_le = bitmap.to_le_bytes();
-    assert_eq!(bytes_le[0], 0b10000001); // bits 0 and 7
-    assert_eq!(bytes_le[1], 0b10000001); // bits 8 and 15
-    assert!(bytes_le[2..].iter().all(|&b| b == 0));
+    let le = bitmap.to_le_bytes();
+    assert_eq!(le[0], 0b10000001); // bits 0 and 7
+    assert_eq!(le[1], 0b10000001); // bits 8 and 15
+    assert!(le[2..].iter().all(|&b| b == 0));
 
-    let (restored, _) = SmolBitmap::from_le_bytes(&bytes_le);
+    let (restored, _) = SmolBitmap::from_le_bytes(&le);
     assert_eq!(bitmap, restored);
 
     // Test to_be_bytes and from_be_bytes
-    let bytes_be = bitmap.to_be_bytes();
-    let (restored, _) = SmolBitmap::from_be_bytes(&bytes_be);
+    let be = bitmap.to_be_bytes();
+    let (restored, _) = SmolBitmap::from_be_bytes(&be);
     assert_eq!(bitmap, restored);
 
     // Test with larger bitmap
@@ -909,20 +910,20 @@ fn test_bytes_conversion() {
         large.insert(i);
     }
 
-    let bytes_le = large.to_le_bytes();
-    let (restored, _) = SmolBitmap::from_le_bytes(&bytes_le);
+    let le = large.to_le_bytes();
+    let (restored, _) = SmolBitmap::from_le_bytes(&le);
     assert_eq!(large, restored);
 
-    let bytes_be = large.to_be_bytes();
-    let (restored, _) = SmolBitmap::from_be_bytes(&bytes_be);
+    let be = large.to_be_bytes();
+    let (restored, _) = SmolBitmap::from_be_bytes(&be);
     assert_eq!(large, restored);
 
     // Test empty bitmap
     let empty = SmolBitmap::new();
-    let bytes_le = empty.to_le_bytes();
-    assert!(bytes_le.is_empty());
+    let le = empty.to_le_bytes();
+    assert!(le.is_empty());
 
-    let (restored, _) = SmolBitmap::from_le_bytes(&bytes_le);
+    let (restored, _) = SmolBitmap::from_le_bytes(&le);
     assert_eq!(empty, restored);
 }
 

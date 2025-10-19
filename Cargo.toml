@@ -1,6 +1,6 @@
 [package]
 name = "smol_bitmap"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Can Boluk <me@can.ac>"]
@@ -13,6 +13,27 @@ keywords = ["bitmap", "bitset", "bitvector", "inline", "no-std"]
 categories = ["data-structures", "algorithms", "embedded"]
 license = "MIT"
 exclude = [".github/", ".gitignore", "rustfmt.toml"]
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# 10_000_000 vs 0xDEADBEEF context dependent preference
+unreadable_literal = "allow"
+# #[inline(always)] is sometimes needed for performance-critical code
+inline_always = "allow"
+# as is sometimes used to truncate explicitly
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+# Documenting every possible error return is often redundant
+missing_errors_doc = "allow"
+# Variables like 'bytes_le' and 'bytes_be' are fine together
+similar_names = "allow"
 
 [package.metadata.docs.rs]
 all-features = true

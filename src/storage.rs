@@ -199,7 +199,7 @@ impl BitArray {
                 inline_promote(&array)
             }
             Self::External(arr) if !arr.is_empty() => arr.into_vec(),
-            _ => return Default::default(),
+            Self::External(_) => return Default::default(),
         };
 
         // Manual implementation of vec.into_raw_parts()
@@ -377,6 +377,7 @@ impl From<ArrayBitmap> for StackVec {
 
 impl StackVec {
     #[inline(always)]
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             data: MaybeUninit::uninit(),
@@ -392,12 +393,14 @@ impl StackVec {
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn len(&self) -> usize {
         self.len as usize
     }
 
     #[inline(always)]
     #[allow(dead_code)]
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -434,6 +437,7 @@ impl StackVec {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn as_slice(&self) -> &[u64] {
         let n = self.len();
         unsafe { self.data.assume_init_ref().get_unchecked(..n) }
@@ -494,11 +498,13 @@ impl StackVec {
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn capacity(&self) -> usize {
         WORDS_INLINE
     }
 
     #[inline(always)]
+    #[must_use]
     pub const fn as_ptr(&self) -> *const u64 {
         self.data.as_ptr().cast::<u64>()
     }
@@ -619,6 +625,7 @@ impl SmolBitmapBuilder {
     /// let builder = SmolBitmapBuilder::new();
     /// ```
     #[inline(always)]
+    #[must_use]
     pub const fn new() -> Self {
         Self::Inline(StackVec::new())
     }
@@ -644,6 +651,7 @@ impl SmolBitmapBuilder {
     /// // Large capacity uses heap storage
     /// let builder = SmolBitmapBuilder::with_capacity(10);
     /// ```
+    #[must_use]
     pub fn with_capacity(words: usize) -> Self {
         if words <= WORDS_INLINE {
             Self::Inline(StackVec::new())
@@ -671,12 +679,9 @@ impl SmolBitmapBuilder {
     /// let words = [0b10101010, 0b11110000];
     /// let builder = SmolBitmapBuilder::from_slice(&words);
     /// ```
+    #[must_use]
     pub fn from_slice(slice: &[u64]) -> Self {
-        if let Ok(vec) = StackVec::from_slice(slice) {
-            Self::Inline(vec)
-        } else {
-            Self::External(slice.to_vec())
-        }
+        StackVec::from_slice(slice).map_or_else(|s| Self::External(s.to_vec()), Self::Inline)
     }
 
     /// Returns a slice of the words currently in the builder.
@@ -691,6 +696,7 @@ impl SmolBitmapBuilder {
     /// let slice = builder.as_slice();
     /// assert_eq!(slice, &[0xFFFF]);
     /// ```
+    #[must_use]
     pub fn as_slice(&self) -> &[u64] {
         match self {
             Self::Inline(a) => a.as_slice(),
@@ -849,6 +855,7 @@ impl SmolBitmapBuilder {
     /// let builder = SmolBitmapBuilder::with_capacity(10);
     /// assert_eq!(builder.capacity(), 10);
     /// ```
+    #[must_use]
     pub const fn capacity(&self) -> usize {
         match self {
             Self::Inline(a) => a.capacity(),
@@ -874,6 +881,7 @@ impl SmolBitmapBuilder {
     /// let builder = SmolBitmapBuilder::with_capacity(1);
     /// let ptr = builder.as_ptr();
     /// ```
+    #[must_use]
     pub const fn as_ptr(&self) -> *const u64 {
         match self {
             Self::Inline(a) => a.as_ptr(),
@@ -978,6 +986,7 @@ impl SmolBitmapBuilder {
     /// assert!(bitmap.get(3));
     /// assert!(!bitmap.get(2));
     /// ```
+    #[must_use]
     pub fn finalize(self) -> SmolBitmap {
         match self {
             Self::Inline(a) => SmolBitmap::from(a.as_slice()),

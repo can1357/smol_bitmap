@@ -37,7 +37,7 @@ use crate::{
 ///
 /// # Internal Representation
 ///
-/// The `words` field has dual purpose:
+/// The `array` field has dual purpose:
 /// - Inline mode: Contains the actual bit data
 /// - External mode: Contains [pointer, -length] where length is negative to set
 ///   MSB
@@ -199,6 +199,7 @@ impl SmolBitmap {
     /// # Safety
     /// This function is only valid if `is_spilled` returns true.
     /// The pointer is encoded in the first word when using external storage.
+    #[inline(always)]
     const fn external_ptr(&self) -> *mut u64 {
         debug_assert!(self.is_spilled());
         self.array[0] as *mut u64
@@ -238,6 +239,7 @@ impl SmolBitmap {
 
     /// Get a const pointer to the storage
     #[must_use]
+    #[inline(always)]
     pub const fn as_ptr(&self) -> *const u64 {
         if self.is_spilled() {
             self.external_ptr()
@@ -258,6 +260,7 @@ impl SmolBitmap {
 
     /// Get the storage as a slice
     #[must_use]
+    #[inline(always)]
     pub const fn as_slice(&self) -> &[u64] {
         unsafe { slice::from_raw_parts(self.as_ptr(), self.word_count()) }
     }
@@ -434,6 +437,7 @@ impl SmolBitmap {
     /// assert_eq!(bitmap.replace(10, false), true);
     /// assert_eq!(bitmap.replace(10, true), false);
     /// ```
+    #[inline(always)]
     pub fn replace(&mut self, i: usize, v: bool) -> bool {
         self.replace_generic(i, v)
     }
@@ -616,6 +620,7 @@ impl SmolBitmap {
     /// let trimmed_slice = bitmap.as_slice_rtrim();
     /// assert_eq!(trimmed_slice.len(), 2); // Only two words are needed
     /// ```
+    #[must_use]
     pub const fn as_slice_rtrim(&self) -> &[u64] {
         rtrim0(self.as_slice())
     }
@@ -649,6 +654,7 @@ impl SmolBitmap {
     /// let c = &[1u64, 2, 3];
     /// assert!(!a.eq_rtrim(c));
     /// ```
+    #[must_use]
     pub fn eq_rtrim(&self, b: &[u64]) -> bool {
         let a = self.as_slice();
         let (a, b, common) = if a.len() >= b.len() {
@@ -689,6 +695,7 @@ impl SmolBitmap {
     /// let c = &[1u64, 2, 3];
     /// assert_eq!(a.cmp_rtrim(c), core::cmp::Ordering::Less);
     /// ```
+    #[must_use]
     pub fn cmp_rtrim(&self, b: &[u64]) -> Ordering {
         let a = self.as_slice();
         let (a, b, common, rev) = if a.len() >= b.len() {
@@ -1367,10 +1374,8 @@ impl SmolBitmap {
     #[must_use]
     pub fn trailing_zeros(&self) -> Option<usize> {
         let last = self.last()?;
-        match self.prev_set_bit(last.saturating_sub(1)) {
-            Some(prev) => Some(last - prev - 1),
-            None => Some(last), // All bits below 'last' are zero
-        }
+        self.prev_set_bit(last.saturating_sub(1))
+            .map_or(Some(last), |prev| Some(last - prev - 1))
     }
 
     /// Counts the number of leading one bits (consecutive ones from bit 0).
@@ -1511,9 +1516,7 @@ impl SmolBitmap {
     #[must_use]
     pub fn find_last_zero(&self) -> Option<usize> {
         // Find the maximum bit to search up to
-        let max_bit = if let Some(last) = self.last() {
-            last
-        } else {
+        let Some(max_bit) = self.last() else {
             return Some(0); // Empty bitmap, first bit is zero
         };
 
@@ -2295,52 +2298,18 @@ impl SmolBitmap {
             used[last_word_idx] &= mask;
         }
     }
-}
 
-// ============================================================================
-// Index Trait Implementations
-// ============================================================================
-
-impl Index<usize> for SmolBitmap {
-    type Output = bool;
-
-    /// Returns a reference to a static bool representing the bit at the given
-    /// index.
-    ///
-    /// Note: Since we can't return a reference to a bit directly, this returns
-    /// a reference to a static `true` or `false` value based on the bit state.
-    ///
-    /// Returns `false` for indices beyond the capacity, consistent with
-    /// `get()`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use core::ops::Index;
-    /// use smol_bitmap::SmolBitmap;
-    ///
-    /// let mut bitmap = SmolBitmap::new();
-    /// bitmap.insert(5);
-    ///
-    /// assert_eq!(*bitmap.index(5), true);
-    /// assert_eq!(*bitmap.index(0), false);
-    /// assert_eq!(*bitmap.index(1000), false); // Out of bounds returns false
-    /// ```
-    fn index(&self, index: usize) -> &Self::Output {
-        if self.get(index) { &true } else { &false }
-    }
-}
-
-/// Helper method to extract a range of bits as a new bitmap.
-///
-/// This is the actual implementation for range extraction, since the Index
-/// trait requires returning a reference which doesn't work well for computed
-/// values.
-impl SmolBitmap {
     /// Extracts a range of bits as a new bitmap.
     ///
     /// The bits in the range [start, end) are copied to a new bitmap,
     /// with bit `start` becoming bit 0 in the new bitmap.
+    ///
+    /// # Panics
+    ///
+    /// This function will not panic under normal circumstances. The unwrap call
+    /// in the implementation is safe because the function returns early when
+    /// the slice would be empty, ensuring there's always at least one element
+    /// when we access the last element.
     ///
     /// # Examples
     ///
@@ -2465,6 +2434,36 @@ impl SmolBitmap {
 
         // Try to shrink back to inline storage if possible
         rb.into()
+    }
+}
+
+impl Index<usize> for SmolBitmap {
+    type Output = bool;
+
+    /// Returns a reference to a static bool representing the bit at the given
+    /// index.
+    ///
+    /// Note: Since we can't return a reference to a bit directly, this returns
+    /// a reference to a static `true` or `false` value based on the bit state.
+    ///
+    /// Returns `false` for indices beyond the capacity, consistent with
+    /// `get()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::ops::Index;
+    /// use smol_bitmap::SmolBitmap;
+    ///
+    /// let mut bitmap = SmolBitmap::new();
+    /// bitmap.insert(5);
+    ///
+    /// assert_eq!(*bitmap.index(5), true);
+    /// assert_eq!(*bitmap.index(0), false);
+    /// assert_eq!(*bitmap.index(1000), false); // Out of bounds returns false
+    /// ```
+    fn index(&self, index: usize) -> &Self::Output {
+        if self.get(index) { &true } else { &false }
     }
 }
 

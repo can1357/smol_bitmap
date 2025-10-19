@@ -9,10 +9,10 @@ use rkyv::{
 
 use crate::{SmolBitmap, SmolBitmapBuilder};
 
-/// The archived version of SmolBitmap.
+/// The archived version of `SmolBitmap`.
 pub type ArchivedSmolBitmap = ArchivedVec<<u64 as rkyv::Archive>::Archived>;
 
-/// The resolver for SmolBitmap.
+/// The resolver for `SmolBitmap`.
 pub type SmolBitmapResolver = rkyv::vec::VecResolver;
 
 // Manual Archive implementation for SmolBitmap

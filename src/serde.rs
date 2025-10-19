@@ -9,7 +9,9 @@ use serde::{
 
 /// Serde implementation serializing the bitmap as a sequence of u64 words.
 pub mod words {
-    use super::*;
+    use super::{
+        Deserializer, SeqAccess, Serialize, Serializer, SmolBitmap, SmolBitmapBuilder, Visitor,
+    };
 
     /// Serialize the bitmap as a sequence of u64 words.
     pub fn serialize<S>(b: &SmolBitmap, serializer: S) -> Result<S::Ok, S::Error>
@@ -53,7 +55,7 @@ pub mod words {
 /// Module for serializing and deserializing [`SmolBitmap`] as a sorted set of
 /// integers.
 pub mod sorted_set {
-    use super::*;
+    use super::{Deserializer, SeqAccess, SerializeSeq, Serializer, SmolBitmap, Visitor, de};
 
     /// Serialize the [`SmolBitmap`] as a sorted sequence of integers.
     ///
@@ -69,7 +71,7 @@ pub mod sorted_set {
     {
         let n = b.cardinality();
         let mut ser = serializer.serialize_seq(Some(n))?;
-        for i in b.iter() {
+        for i in b {
             ser.serialize_element(&i)?;
         }
         ser.end()
@@ -126,7 +128,7 @@ pub mod sorted_set {
 /// Module for serializing and deserializing [`SmolBitmap`] as an unordered set
 /// of integers.
 pub mod unordered_set {
-    use super::*;
+    use super::{Deserializer, SeqAccess, Serializer, SmolBitmap, Visitor, sorted_set};
 
     /// Serialize the [`SmolBitmap`] as an unordered sequence of integers.
     ///
@@ -275,7 +277,7 @@ impl<'de> Deserialize<'de> for SmolBitmap {
 
 /// Helper module for base64 serialization
 mod binser {
-    use super::*;
+    use super::{Deserializer, Serializer, SmolBitmap, Visitor, de};
 
     /// Serialize the [`SmolBitmap`] as bytes.
     ///
@@ -312,7 +314,7 @@ mod binser {
         if deserializer.is_human_readable() {
             struct SmolBitmapVisitor<P>(P);
 
-            impl<'de, P> Visitor<'de> for SmolBitmapVisitor<P>
+            impl<P> Visitor<'_> for SmolBitmapVisitor<P>
             where
                 P: FnOnce(&[u8]) -> (SmolBitmap, &[u8]),
             {
@@ -344,7 +346,7 @@ mod binser {
         } else {
             struct SmolBitmapVisitor<P>(P);
 
-            impl<'de, P> Visitor<'de> for SmolBitmapVisitor<P>
+            impl<P> Visitor<'_> for SmolBitmapVisitor<P>
             where
                 P: FnOnce(&[u8]) -> (SmolBitmap, &[u8]),
             {

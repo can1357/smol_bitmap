@@ -269,12 +269,7 @@ impl Ord for SmolBitmap {
 
 impl Hash for SmolBitmap {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash only the meaningful bits
-        let slice = self.as_slice_rtrim();
-        state.write_usize(slice.len());
-        for word in slice {
-            state.write_u64(*word);
-        }
+        self.as_slice_rtrim().hash(state);
     }
 }
 

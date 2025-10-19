@@ -1,9 +1,9 @@
 # SmolBitmap
 
-[![Crates.io](https://img.shields.io/crates/v/smol_bitmap.svg?_v=0.3.1)](https://crates.io/crates/smol_bitmap)
-[![Documentation](https://docs.rs/smol_bitmap/badge.svg?_v=0.3.1)](https://docs.rs/smol_bitmap)
-[![License](https://img.shields.io/crates/l/smol_bitmap.svg?_v=0.3.1)](https://github.com/can1357/smol_bitmap#license)
-[![CI](https://github.com/can1357/smol_bitmap/workflows/CI/badge.svg?_v=0.3.1)](https://github.com/can1357/smol_bitmap/actions)
+[![Crates.io](https://img.shields.io/crates/v/smol_bitmap.svg?_v=0.3.2)](https://crates.io/crates/smol_bitmap)
+[![Documentation](https://docs.rs/smol_bitmap/badge.svg?_v=0.3.2)](https://docs.rs/smol_bitmap)
+[![License](https://img.shields.io/crates/l/smol_bitmap.svg?_v=0.3.2)](https://github.com/can1357/smol_bitmap#license)
+[![CI](https://github.com/can1357/smol_bitmap/workflows/CI/badge.svg?_v=0.3.2)](https://github.com/can1357/smol_bitmap/actions)
 
 A space-efficient bitmap implementation with inline storage optimization for Rust.
 
@@ -23,7 +23,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-smol_bitmap = "0.3.1"
+smol_bitmap = "0.3.2"
 ```
 
 ### Basic Operations
@@ -196,7 +196,7 @@ SmolBitmap supports `no_std` environments with `alloc`:
 
 ```toml
 [dependencies]
-smol_bitmap = { version = "0.3.1", default-features = false }
+smol_bitmap = { version = "0.3.2", default-features = false }
 ```
 
 This will disable the `std` feature but still requires an allocator for heap storage when bitmaps exceed inline capacity.

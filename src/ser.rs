@@ -30,6 +30,7 @@ impl SmolBitmap {
     /// assert_eq!(bytes[0], 0b00000001);
     /// ```
     #[inline(always)]
+    #[must_use]
     pub const fn to_ne_bytes(&self) -> &[u8] {
         let slice = self.as_slice_rtrim();
         unsafe { slice::from_raw_parts(slice.as_ptr().cast::<u8>(), slice.len() * 8) }
@@ -47,6 +48,7 @@ impl SmolBitmap {
     /// the internal representation of the bitmap. Misalignment or incorrect
     /// sizing may lead to undefined behavior.
     #[inline(always)]
+    #[must_use]
     pub fn from_ne_bytes(bytes: &[u8]) -> (Self, &[u8]) {
         let (words, rest) = bytes.as_chunks::<8>();
         let mut builder = SmolBitmapBuilder::with_capacity(words.len());
